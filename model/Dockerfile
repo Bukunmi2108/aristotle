@@ -4,22 +4,22 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG MODEL_REPO_ID=Qwen/Qwen3-8B-GGUF
 ARG MODEL_FILENAME=Qwen3-8B-Q4_K_M.gguf
 ARG MODEL_DIR=/models
-ARG LLAMA_CPP_REF=master
+ARG BAKE_MODEL=true
+ARG LLAMA_CPP_VERSION=b9789
+ARG LLAMA_CPP_ARCHIVE=llama-b9789-bin-ubuntu-x64.tar.gz
 
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
     curl \
     ca-certificates \
-    libcurl4-openssl-dev \
-    libssl-dev \
-    pkg-config \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
 
 RUN mkdir -p /opt/llama.cpp \
-    && echo "Downloading llama.cpp source archive: ${LLAMA_CPP_REF}" \
+    && LLAMA_CPP_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_VERSION}/${LLAMA_CPP_ARCHIVE}" \
+    && echo "Downloading llama.cpp release archive:" \
+    && echo "  ${LLAMA_CPP_URL}" \
     && curl \
         --location \
         --fail \
@@ -28,15 +28,15 @@ RUN mkdir -p /opt/llama.cpp \
         --retry 3 \
         --retry-delay 5 \
         --connect-timeout 30 \
-        "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_CPP_REF}.tar.gz" \
-        --output /tmp/llama.cpp.tar.gz \
-    && tar -xzf /tmp/llama.cpp.tar.gz --strip-components=1 -C /opt/llama.cpp \
-    && rm /tmp/llama.cpp.tar.gz \
-    && cd /opt/llama.cpp \
-    && cmake -B build -DLLAMA_CURL=ON -DLLAMA_OPENSSL=ON \
-    && cmake --build build --config Release --target llama-server -j"$(nproc)"
+        "$LLAMA_CPP_URL" \
+        --output /tmp/llama.cpp-bin.tar.gz \
+    && tar -xzf /tmp/llama.cpp-bin.tar.gz --strip-components=1 -C /opt/llama.cpp \
+    && rm /tmp/llama.cpp-bin.tar.gz \
+    && chmod +x /opt/llama.cpp/llama-server \
+    && /opt/llama.cpp/llama-server --version
 
-ENV PATH="/opt/llama.cpp/build/bin:${PATH}"
+ENV PATH="/opt/llama.cpp:${PATH}" \
+    LD_LIBRARY_PATH="/opt/llama.cpp"
 
 ENV MODEL_REPO_ID="${MODEL_REPO_ID}" \
     MODEL_FILENAME="${MODEL_FILENAME}" \
@@ -52,11 +52,16 @@ RUN mkdir -p "$MODEL_DIR" \
     && MODEL_PATH="${MODEL_DIR}/${MODEL_FILENAME}" \
     && echo "============================================================" \
     && echo "Baking Aristotle model into image" \
+    && echo "  BAKE_MODEL=${BAKE_MODEL}" \
     && echo "  MODEL_REPO_ID=${MODEL_REPO_ID}" \
     && echo "  MODEL_FILENAME=${MODEL_FILENAME}" \
     && echo "  MODEL_URL=${MODEL_URL}" \
     && echo "  MODEL_PATH=${MODEL_PATH}" \
     && echo "============================================================" \
+    && if [ "$BAKE_MODEL" != "true" ]; then \
+        echo "BAKE_MODEL is not true. Skipping model download."; \
+        exit 0; \
+    fi \
     && curl \
         --location \
         --fail \
