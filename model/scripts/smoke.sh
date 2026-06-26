@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${MODEL_BASE_URL:-http://localhost:8200}"
-MODEL_NAME="${MODEL_NAME:-/models/Qwen3-8B-Q4_K_M.gguf}"
+MODEL_NAME="${MODEL_NAME:-/models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf}"
 
 curl -s "$BASE_URL/v1/models"
 
