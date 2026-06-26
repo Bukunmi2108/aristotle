@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${MODEL_REPO_ID:?MODEL_REPO_ID is required}"
 : "${MODEL_FILENAME:?MODEL_FILENAME is required}"
-: "${MODEL_CONTEXT_SIZE:=4096}"
+: "${MODEL_CONTEXT_SIZE:=32768}"
 : "${MODEL_THREADS:=2}"
 : "${MODEL_PARALLEL:=1}"
 : "${MODEL_PORT:=7860}"
