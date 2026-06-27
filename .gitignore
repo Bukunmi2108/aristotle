@@ -3,6 +3,15 @@
 !**/.env.example
 docs/
 
+# Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+*.tsbuildinfo
+.vercel/
+**/.vercel/
+
 # Python
 __pycache__/
 *.py[cod]
