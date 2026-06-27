@@ -214,8 +214,12 @@ function MessageBubble({
         {reasoning.length > 0 && (
           <section className="reasoning-panel">
             <button
-              className="reasoning-panel__trigger"
+              className={cx(
+                "reasoning-panel__trigger",
+                isDetailsOpen && "reasoning-panel__trigger--open",
+              )}
               type="button"
+              aria-expanded={isDetailsOpen}
               onClick={() =>
                 setDetailsOpen((current) => ({
                   ...current,
@@ -223,12 +227,14 @@ function MessageBubble({
                 }))
               }
             >
-              {isDetailsOpen ? (
-                <ChevronDown size={16} strokeWidth={iconStroke} />
-              ) : (
-                <ChevronRight size={16} strokeWidth={iconStroke} />
-              )}
-              <span>Thinking</span>
+              <span className="reasoning-panel__glyph" aria-hidden="true">
+                {isDetailsOpen ? (
+                  <ChevronDown size={13} strokeWidth={iconStroke} />
+                ) : (
+                  <ChevronRight size={13} strokeWidth={iconStroke} />
+                )}
+              </span>
+              <span className="reasoning-panel__label">Thinking</span>
             </button>
             {isDetailsOpen && (
               <div className="reasoning-panel__body">
