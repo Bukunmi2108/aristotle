@@ -1,0 +1,15 @@
+[project]
+name = "aristotle-api"
+version = "0.1.0"
+description = "Agent API and WebSocket orchestration service for Aristotle"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.10.0",
+    "pydantic-ai-slim[openai,spec]>=0.0.53",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[tool.uv]
+package = false
