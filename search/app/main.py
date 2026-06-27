@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import Depends, FastAPI, Request
 from app.config import SERVICE_NAME, SETTINGS
-from app.models import HealthResponse, ReadinessResponse, SearchRequest, SearchResponse
+from app.models import HealthResponse, ReadinessResponse, RootResponse, SearchRequest, SearchResponse
 from app.searxng import SearxngClient, searxng_params
 
 
@@ -27,6 +27,20 @@ app = FastAPI(
 
 def get_searxng(request: Request) -> SearxngClient:
     return request.app.state.searxng
+
+
+@app.get("/", response_model=RootResponse)
+async def root() -> RootResponse:
+    return RootResponse(
+        service=SERVICE_NAME,
+        description="SearXNG-backed search tool service for Aristotle.",
+        endpoints={
+            "health": "/healthz",
+            "readiness": "/readyz",
+            "search": "/search",
+            "docs": "/docs",
+        },
+    )
 
 
 @app.get("/healthz", response_model=HealthResponse)

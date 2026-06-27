@@ -85,3 +85,9 @@ class HealthResponse(BaseModel):
 
 class ReadinessResponse(HealthResponse):
     searxng_url: str
+
+
+class RootResponse(BaseModel):
+    service: str
+    description: str
+    endpoints: dict[str, str]
