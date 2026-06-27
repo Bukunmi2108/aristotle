@@ -52,6 +52,7 @@ class SearchMetadata(BaseModel):
     elapsed_ms: int
     result_count: int
     engines: list[str] = Field(default_factory=list)
+    fallback_used: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -66,6 +67,7 @@ class SearchResponse(BaseModel):
         results: list[SearchResult],
         engines: list[str],
         elapsed_ms: int,
+        fallback_used: bool = False,
     ) -> "SearchResponse":
         return cls(
             query=request.query,
@@ -74,6 +76,7 @@ class SearchResponse(BaseModel):
                 elapsed_ms=elapsed_ms,
                 result_count=len(results),
                 engines=engines,
+                fallback_used=fallback_used,
             ),
         )
 

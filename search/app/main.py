@@ -69,6 +69,14 @@ async def search(
     started = time.perf_counter()
     payload = await searxng.search(searxng_params(search_request))
     results, engines = payload.normalize(search_request)
+    fallback_used = False
+
+    if not results and search_request.freshness is not None:
+        fallback_request = search_request.model_copy(update={"freshness": None})
+        payload = await searxng.search(searxng_params(fallback_request))
+        results, engines = payload.normalize(fallback_request)
+        fallback_used = bool(results)
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     return SearchResponse.from_results(
@@ -76,4 +84,5 @@ async def search(
         results=results,
         engines=engines,
         elapsed_ms=elapsed_ms,
+        fallback_used=fallback_used,
     )
