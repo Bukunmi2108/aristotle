@@ -3,7 +3,6 @@ use_default_settings:
     remove:
       - ahmia
       - torch
-      - brave
 
 general:
   debug: false

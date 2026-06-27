@@ -179,7 +179,6 @@ use_default_settings:
     remove:
       - ahmia
       - torch
-      - brave
 ```
 
 `searxng/limiter.toml` is included to avoid missing-config warnings and to define localhost as a trusted proxy.
