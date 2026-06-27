@@ -8,6 +8,7 @@ SERVICE_NAME = "aristotle-api"
 @dataclass(frozen=True)
 class ApiSettings:
     port: int
+    cors_allow_origins: list[str]
     model_base_url: str
     model_name: str
     search_base_url: str
@@ -22,6 +23,7 @@ class ApiSettings:
     def from_env(cls) -> "ApiSettings":
         return cls(
             port=int(os.getenv("PORT", "7860")),
+            cors_allow_origins=_split_csv(os.getenv("CORS_ALLOW_ORIGINS", "*")),
             model_base_url=os.getenv(
                 "ARISTOTLE_MODEL_BASE_URL",
                 "https://bukunmi2108-aristotle-model.hf.space",
@@ -52,6 +54,10 @@ class ApiSettings:
     @property
     def model_v1_base_url(self) -> str:
         return f"{self.model_base_url}/v1"
+
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 SETTINGS = ApiSettings.from_env()

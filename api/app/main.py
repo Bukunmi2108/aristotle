@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import SERVICE_NAME, SETTINGS
 from app.models import HealthResponse, ReadyResponse, RootResponse, ServicesResponse
@@ -26,6 +27,13 @@ app = FastAPI(
     description="Agent orchestration service for Aristotle.",
     version="0.1.0",
     lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=SETTINGS.cors_allow_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 app.include_router(chat_router)
 
