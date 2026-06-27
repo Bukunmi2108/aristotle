@@ -18,6 +18,9 @@ from app.models import ClientUserMessage, SearchResponse
 from app.services.search import SearchClient
 
 
+AGENT_MAX_SEARCH_RESULTS = 5
+
+
 class AristotleAgentRuntime:
     def __init__(self, search_client: SearchClient, settings: ApiSettings):
         self.search_client = search_client
@@ -32,16 +35,16 @@ class AristotleAgentRuntime:
             http_client=self.search_client.http,
             events=events,
             settings=self.settings,
-            max_search_results=user_message.options.max_search_results,
-            web_tools_enabled=user_message.options.use_search,
+            max_search_results=AGENT_MAX_SEARCH_RESULTS,
+            web_tools_enabled=True,
         )
         final_parts: list[str] = []
 
         await events.send(
             "agent.started",
             input={
-                "web_tools_enabled": user_message.options.use_search,
-                "max_search_results": user_message.options.max_search_results,
+                "web_tools_enabled": True,
+                "max_search_results": AGENT_MAX_SEARCH_RESULTS,
             },
         )
 
@@ -64,6 +67,7 @@ class AristotleAgentRuntime:
                 "tool.result",
                 tool=event.part.tool_name,
                 result_count=_result_count(event.part.content),
+                result_preview=_result_preview(event.part.content),
             )
             return ""
 
@@ -92,4 +96,33 @@ def _result_count(content: Any) -> int | None:
         results = content.get("results")
         if isinstance(results, list):
             return len(results)
+    return None
+
+
+def _result_preview(content: Any) -> list[dict[str, Any]] | None:
+    if isinstance(content, SearchResponse):
+        return [
+            {
+                "title": result.title,
+                "url": result.url,
+                "source": result.source,
+            }
+            for result in content.results[:3]
+        ]
+
+    if isinstance(content, dict):
+        results = content.get("results")
+        if isinstance(results, list):
+            preview = []
+            for result in results[:3]:
+                if isinstance(result, dict):
+                    preview.append(
+                        {
+                            "title": result.get("title"),
+                            "url": result.get("url"),
+                            "source": result.get("source"),
+                        }
+                    )
+            return preview
+
     return None

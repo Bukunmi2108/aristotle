@@ -40,7 +40,7 @@ class ReadyResponse(BaseModel):
 
 
 class ChatOptions(BaseModel):
-    use_search: bool = False
+    use_search: bool = True
     max_search_results: int = Field(default=5, ge=1, le=10)
 
 

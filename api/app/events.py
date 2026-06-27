@@ -29,6 +29,7 @@ class Event(BaseModel):
     tool: str | None = None
     input: dict[str, Any] | None = None
     result_count: int | None = None
+    result_preview: list[dict[str, Any]] | None = None
     text: str | None = None
     message: str | None = None
     code: str | None = None
