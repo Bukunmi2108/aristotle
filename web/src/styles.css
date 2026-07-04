@@ -389,7 +389,136 @@ input:focus-visible {
   font-size: 16px;
   line-height: 1.78;
   text-wrap: pretty;
-  white-space: pre-wrap;
+}
+
+.message-text > :first-child {
+  margin-top: 0;
+}
+
+.message-text > :last-child {
+  margin-bottom: 0;
+}
+
+.message-text p {
+  margin: 0 0 13px;
+}
+
+.message-text h1,
+.message-text h2,
+.message-text h3,
+.message-text h4 {
+  margin: 24px 0 9px;
+  color: var(--text);
+  font-weight: 680;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.message-text h1 {
+  font-size: 24px;
+}
+
+.message-text h2 {
+  font-size: 21px;
+}
+
+.message-text h3 {
+  font-size: 18px;
+}
+
+.message-text h4 {
+  font-size: 16px;
+}
+
+.message-text ul,
+.message-text ol {
+  margin: 0 0 14px;
+  padding-left: 24px;
+}
+
+.message-text li {
+  margin: 4px 0;
+  padding-left: 2px;
+}
+
+.message-text li > p {
+  margin: 0;
+}
+
+.message-text a {
+  color: #17624d;
+  font-weight: 600;
+  text-decoration-color: rgb(23 98 77 / 0.34);
+  text-underline-offset: 3px;
+}
+
+.message-text a:hover {
+  text-decoration-color: currentColor;
+}
+
+.message-text blockquote {
+  margin: 16px 0;
+  border-left: 3px solid rgb(23 98 77 / 0.35);
+  color: var(--text-soft);
+  padding: 2px 0 2px 14px;
+}
+
+.message-text code {
+  border: 1px solid rgb(211 205 194 / 0.72);
+  border-radius: 6px;
+  background: rgb(247 245 240 / 0.9);
+  color: #203128;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.message-text pre {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 16px 0;
+  border: 1px solid rgb(211 205 194 / 0.72);
+  border-radius: var(--radius);
+  background: #171d19;
+  color: #f3f0e8;
+  padding: 14px 15px;
+}
+
+.message-text pre code {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.message-text table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 16px 0;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.message-text th,
+.message-text td {
+  border: 1px solid rgb(211 205 194 / 0.72);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.message-text th {
+  background: rgb(247 245 240 / 0.9);
+  color: var(--text);
+  font-weight: 680;
+}
+
+.message-text hr {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid rgb(211 205 194 / 0.72);
 }
 
 .reasoning-panel {

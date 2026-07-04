@@ -11,6 +11,8 @@ import {
   Wrench,
 } from "lucide-react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { serviceSummary } from "./api";
 import type {
@@ -315,7 +317,11 @@ function MessagePartGroupView({ group }: { group: MessagePartGroup }) {
 
 function MessagePartView({ part }: { part: MessagePart }) {
   if (part.type === "text") {
-    return <p className="message-text">{part.text}</p>;
+    return (
+      <div className="message-text">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+      </div>
+    );
   }
 
   if (part.type === "warning") {
