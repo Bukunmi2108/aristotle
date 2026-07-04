@@ -7,7 +7,7 @@ SERVICE_NAME = "aristotle-api"
 DEFAULT_FALLBACK_MODEL_BASE_URL = "https://bukunmi2108-aristotle-model.hf.space"
 DEFAULT_FALLBACK_MODEL_NAME = "/models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf"
 DEFAULT_PRIMARY_MODEL_BASE_URL = "https://api-inference.modelscope.ai/v1"
-DEFAULT_PRIMARY_MODEL_NAME = "zai-org/GLM-5.2"
+DEFAULT_PRIMARY_MODEL_NAME = "Qwen/Qwen3-235B-A22B-Instruct-2507"
 
 
 @dataclass(frozen=True)

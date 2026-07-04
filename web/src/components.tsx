@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   Conversation,
   MessagePart,
+  ModelProviderState,
   RunState,
   ServicesResponse,
 } from "./types";
@@ -38,12 +39,14 @@ function AristotleMark({ className = "" }: { className?: string }) {
 type AppHeaderProps = {
   runState: RunState;
   services: ServicesResponse | null;
+  modelProvider: ModelProviderState | null;
   onNewChat: () => void;
 };
 
 export function AppHeader({
   runState,
   services,
+  modelProvider,
   onNewChat,
 }: AppHeaderProps) {
   return (
@@ -55,7 +58,10 @@ export function AppHeader({
       </div>
 
       <div className="app-header__actions">
-        <HealthBeat runState={runState} services={services} />
+        <div className="status-cluster">
+          <HealthBeat runState={runState} services={services} />
+          <ModelProviderTag provider={modelProvider} />
+        </div>
         <button
           className="icon-button icon-button--primary"
           onClick={onNewChat}
@@ -65,6 +71,39 @@ export function AppHeader({
         </button>
       </div>
     </header>
+  );
+}
+
+function ModelProviderTag({
+  provider,
+}: {
+  provider: ModelProviderState | null;
+}) {
+  if (!provider) return null;
+
+  const isFallback = provider.provider === "fallback";
+  const label = providerLabel(provider);
+  const latency = provider.firstTokenLatencyMs ?? provider.selectedLatencyMs;
+  const title = [
+    isFallback ? "Fallback provider" : "Primary provider",
+    provider.model ? `Model: ${provider.model}` : null,
+    provider.url ? `URL: ${provider.url}` : null,
+    latency ? `Latency: ${latency} ms` : null,
+    provider.reason ? `Reason: ${provider.reason}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return (
+    <span
+      className={cx(
+        "model-provider-tag",
+        isFallback && "model-provider-tag--fallback",
+      )}
+      title={title}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -463,6 +502,14 @@ function toolStatus(part: Extract<MessagePart, { type: "tool" }>): string {
   if (part.status === "error") return part.message || "Failed";
   if (part.resultCount === undefined) return "Done";
   return `${part.resultCount} result${part.resultCount === 1 ? "" : "s"}`;
+}
+
+function providerLabel(provider: ModelProviderState): string {
+  if (provider.provider === "fallback") return "Fallback";
+  if (provider.model?.includes("GLM-5.2")) return "GLM-5.2";
+  if (provider.model) return provider.model.split("/").pop() || provider.model;
+  if (provider.provider === "primary") return "Primary";
+  return "Model";
 }
 
 function healthState(

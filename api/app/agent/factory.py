@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 
 from app.agent.capabilities import CUSTOM_CAPABILITY_TYPES
 from app.agent.deps import AgentDeps
+from app.agent.model_trace import ModelProviderInfo, TracedModel
 from app.config import ApiSettings
 
 
@@ -51,12 +52,19 @@ def build_agent(
     )
 
 
-def build_model(settings: ApiSettings) -> OpenAIChatModel | FallbackModel:
-    fallback_model = _build_openai_model(
-        model_name=settings.fallback_model_name,
-        base_url=settings.fallback_model_base_url,
-        api_key=settings.fallback_model_api_key,
-        profile=LLAMA_CPP_OPENAI_PROFILE,
+def build_model(settings: ApiSettings) -> OpenAIChatModel | FallbackModel | TracedModel:
+    fallback_model = TracedModel(
+        _build_openai_model(
+            model_name=settings.fallback_model_name,
+            base_url=settings.fallback_model_base_url,
+            api_key=settings.fallback_model_api_key,
+            profile=LLAMA_CPP_OPENAI_PROFILE,
+        ),
+        ModelProviderInfo(
+            provider="fallback",
+            model=settings.fallback_model_name,
+            url=settings.fallback_model_base_url,
+        ),
     )
 
     if not settings.primary_model_api_key and settings.model_fallback_enabled:
@@ -67,11 +75,18 @@ def build_model(settings: ApiSettings) -> OpenAIChatModel | FallbackModel:
             "is required when MODEL_FALLBACK_ENABLED=false."
         )
 
-    primary_model = _build_openai_model(
-        model_name=settings.primary_model_name,
-        base_url=settings.primary_model_base_url,
-        api_key=settings.primary_model_api_key,
-        profile=MODELSCOPE_OPENAI_PROFILE,
+    primary_model = TracedModel(
+        _build_openai_model(
+            model_name=settings.primary_model_name,
+            base_url=settings.primary_model_base_url,
+            api_key=settings.primary_model_api_key,
+            profile=MODELSCOPE_OPENAI_PROFILE,
+        ),
+        ModelProviderInfo(
+            provider="primary",
+            model=settings.primary_model_name,
+            url=settings.primary_model_base_url,
+        ),
     )
 
     if not settings.model_fallback_enabled:

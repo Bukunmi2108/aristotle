@@ -169,6 +169,13 @@ input:focus-visible {
   gap: 14px;
 }
 
+.status-cluster {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
 .button,
 .icon-button,
 .send-button,
@@ -285,6 +292,31 @@ input:focus-visible {
 
 .health-beat--warn {
   color: var(--danger);
+}
+
+.model-provider-tag {
+  display: inline-flex;
+  max-width: 112px;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid rgb(18 23 19 / 0.09);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.56);
+  color: var(--text-soft);
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-provider-tag--fallback {
+  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, white);
+  color: var(--warning);
 }
 
 .service-alert {
@@ -822,6 +854,10 @@ input:focus-visible {
 
   .health-beat {
     padding: 0;
+  }
+
+  .model-provider-tag {
+    max-width: 92px;
   }
 
   .message-scroll {

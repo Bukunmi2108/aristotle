@@ -27,6 +27,16 @@ export type ClientUserMessage = {
   conversation_id?: string;
 };
 
+export type ModelProviderState = {
+  provider?: string | null;
+  model?: string | null;
+  url?: string | null;
+  reason?: string | null;
+  selectedLatencyMs?: number | null;
+  firstTokenLatencyMs?: number | null;
+  source: "status" | "event";
+};
+
 export type ToolResultPreview = {
   title?: string | null;
   url?: string | null;
@@ -39,6 +49,9 @@ export type ServerEventType =
   | "service.waking"
   | "service.ready"
   | "agent.started"
+  | "model.selected"
+  | "model.fallback"
+  | "model.first_token"
   | "tool.started"
   | "tool.result"
   | "tool.error"
@@ -54,6 +67,9 @@ export type ServerEvent = {
   timestamp: string;
   conversation_id?: string;
   service?: string;
+  provider?: string;
+  model?: string;
+  url?: string;
   tool?: string;
   input?: Record<string, unknown>;
   result_count?: number;
@@ -61,6 +77,8 @@ export type ServerEvent = {
   text?: string;
   message?: string;
   code?: string;
+  reason?: string;
+  latency_ms?: number | null;
 };
 
 export type MessageRole = "user" | "assistant";

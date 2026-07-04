@@ -3,6 +3,7 @@ from time import perf_counter
 import httpx
 
 from app.config import ApiSettings
+from app.model_health import get_provider_unavailable
 from app.models import ServiceStatus
 
 
@@ -12,13 +13,16 @@ class ModelClient:
         self.settings = settings
 
     async def status(self) -> ServiceStatus:
-        primary = await self._provider_status(
-            base_url=self.settings.primary_model_base_url,
-            model_name=self.settings.primary_model_name,
-            api_key=self.settings.primary_model_api_key,
-        )
-        if primary.ok:
-            return primary
+        primary_unavailable = get_provider_unavailable("primary")
+        primary = None
+        if primary_unavailable is None:
+            primary = await self._provider_status(
+                base_url=self.settings.primary_model_base_url,
+                model_name=self.settings.primary_model_name,
+                api_key=self.settings.primary_model_api_key,
+            )
+            if primary.ok:
+                return primary
 
         if self.settings.model_fallback_enabled:
             fallback = await self._provider_status(
@@ -33,7 +37,11 @@ class ModelClient:
             ok=False,
             service="model",
             url=self.settings.primary_model_base_url,
-            error=primary.error,
+            error=primary_unavailable.reason
+            if primary_unavailable is not None
+            else primary.error
+            if primary is not None
+            else "Primary model is unavailable.",
         )
 
     async def is_ready(self) -> bool:

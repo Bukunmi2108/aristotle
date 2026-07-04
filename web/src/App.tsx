@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   Conversation,
   MessagePart,
+  ModelProviderState,
   RunState,
   ServerEvent,
   ServicesResponse,
@@ -33,6 +34,8 @@ function App() {
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [composer, setComposer] = useState("");
   const [runState, setRunState] = useState<RunState>("idle");
+  const [modelProvider, setModelProvider] =
+    useState<ModelProviderState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({});
   const socketRef = useRef<WebSocket | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
@@ -58,7 +61,11 @@ function App() {
   async function refreshServices() {
     try {
       setServiceError(null);
-      setServices(await fetchServices());
+      const nextServices = await fetchServices();
+      setServices(nextServices);
+      setModelProvider((current) =>
+        current?.source === "event" ? current : providerFromServices(nextServices),
+      );
     } catch (error) {
       setServiceError(
         error instanceof Error ? error.message : "Status check failed.",
@@ -186,6 +193,44 @@ function App() {
 
     if (event.type === "agent.started") {
       setRunState("streaming");
+      return;
+    }
+
+    if (event.type === "model.fallback") {
+      setModelProvider({
+        provider: "fallback",
+        model: event.model,
+        url: event.url,
+        reason: event.reason,
+        selectedLatencyMs: event.latency_ms,
+        source: "event",
+      });
+      return;
+    }
+
+    if (event.type === "model.selected") {
+      setModelProvider((current) => ({
+        provider: event.provider,
+        model: event.model,
+        url: event.url,
+        reason: current?.reason,
+        selectedLatencyMs: event.latency_ms,
+        firstTokenLatencyMs: current?.firstTokenLatencyMs,
+        source: "event",
+      }));
+      return;
+    }
+
+    if (event.type === "model.first_token") {
+      setModelProvider((current) => ({
+        provider: event.provider || current?.provider,
+        model: event.model || current?.model,
+        url: event.url || current?.url,
+        reason: current?.reason,
+        selectedLatencyMs: current?.selectedLatencyMs,
+        firstTokenLatencyMs: event.latency_ms,
+        source: "event",
+      }));
       return;
     }
 
@@ -445,6 +490,7 @@ function App() {
         <AppHeader
           runState={runState}
           services={services}
+          modelProvider={modelProvider}
           onNewChat={createNewChat}
         />
 
@@ -493,6 +539,29 @@ function textFromParts(parts: MessagePart[]): string {
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
     .trim();
+}
+
+function providerFromServices(services: ServicesResponse): ModelProviderState | null {
+  if (!services.model.ok) {
+    return null;
+  }
+
+  const url = services.model.url;
+  if (url.includes("modelscope")) {
+    return {
+      provider: "primary",
+      model: "zai-org/GLM-5.2",
+      url,
+      source: "status",
+    };
+  }
+
+  return {
+    provider: "fallback",
+    model: "fallback",
+    url,
+    source: "status",
+  };
 }
 
 export default App;

@@ -9,6 +9,9 @@ EventType = Literal[
     "service.waking",
     "service.ready",
     "agent.started",
+    "model.selected",
+    "model.fallback",
+    "model.first_token",
     "tool.started",
     "tool.result",
     "tool.error",
@@ -26,6 +29,9 @@ class Event(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     conversation_id: str | None = None
     service: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    url: str | None = None
     tool: str | None = None
     input: dict[str, Any] | None = None
     result_count: int | None = None
@@ -33,6 +39,8 @@ class Event(BaseModel):
     text: str | None = None
     message: str | None = None
     code: str | None = None
+    reason: str | None = None
+    latency_ms: int | None = None
 
 
 class EventSender:

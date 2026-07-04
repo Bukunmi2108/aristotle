@@ -1,4 +1,5 @@
 from typing import Any
+from time import perf_counter
 
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
@@ -12,6 +13,11 @@ from pydantic_ai.messages import (
 
 from app.agent.deps import AgentDeps
 from app.agent.factory import build_agent
+from app.agent.model_trace import (
+    ModelTrace,
+    reset_model_trace,
+    start_model_trace,
+)
 from app.config import ApiSettings
 from app.events import EventSender
 from app.models import ClientUserMessage, SearchResponse
@@ -26,38 +32,67 @@ class AristotleAgentRuntime:
     async def stream_response(
         self, user_message: ClientUserMessage, events: EventSender
     ) -> str:
-        agent = build_agent(self.settings)
-        options = user_message.options
-        deps = AgentDeps(
-            search_client=self.search_client,
-            http_client=self.search_client.http,
-            events=events,
-            settings=self.settings,
-            max_search_results=options.max_search_results,
-            web_tools_enabled=options.use_search,
-        )
-        final_parts: list[str] = []
+        trace, trace_token = start_model_trace(self.settings)
+        try:
+            agent = build_agent(self.settings)
+            options = user_message.options
+            deps = AgentDeps(
+                search_client=self.search_client,
+                http_client=self.search_client.http,
+                events=events,
+                settings=self.settings,
+                max_search_results=options.max_search_results,
+                web_tools_enabled=options.use_search,
+            )
+            final_parts: list[str] = []
+            model_started = perf_counter()
+            model_selection_sent = False
+            first_token_sent = False
 
-        await events.send(
-            "agent.started",
-            input={
-                "web_tools_enabled": options.use_search,
-                "max_search_results": options.max_search_results,
-            },
-        )
+            await events.send(
+                "agent.started",
+                input={
+                    "web_tools_enabled": options.use_search,
+                    "max_search_results": options.max_search_results,
+                    "primary_model": trace.primary.model,
+                    "fallback_model": trace.fallback.model if trace.fallback else None,
+                },
+            )
 
-        async with agent.run_stream_events(
-            user_message.message,
-            deps=deps,
-            model_settings={"temperature": self.settings.agent_temperature},
-            conversation_id=user_message.conversation_id,
-        ) as stream:
-            async for event in stream:
-                text_delta = await self._handle_event(event, events)
-                if text_delta:
-                    final_parts.append(text_delta)
+            async with agent.run_stream_events(
+                user_message.message,
+                deps=deps,
+                model_settings={"temperature": self.settings.agent_temperature},
+                conversation_id=user_message.conversation_id,
+            ) as stream:
+                async for event in stream:
+                    if trace.selected and not model_selection_sent:
+                        await _send_model_selection(events, trace)
+                        model_selection_sent = True
 
-        return "".join(final_parts)
+                    if _has_stream_token(event) and not first_token_sent:
+                        if trace.selected and not model_selection_sent:
+                            await _send_model_selection(events, trace)
+                            model_selection_sent = True
+                        await events.send(
+                            "model.first_token",
+                            provider=trace.selected.provider if trace.selected else None,
+                            model=trace.selected.model if trace.selected else None,
+                            url=trace.selected.url if trace.selected else None,
+                            latency_ms=int((perf_counter() - model_started) * 1000),
+                        )
+                        first_token_sent = True
+
+                    text_delta = await self._handle_event(event, events)
+                    if text_delta:
+                        final_parts.append(text_delta)
+
+            if trace.selected and not model_selection_sent:
+                await _send_model_selection(events, trace)
+
+            return "".join(final_parts)
+        finally:
+            reset_model_trace(trace_token)
 
     async def _handle_event(self, event: Any, events: EventSender) -> str:
         if isinstance(event, FunctionToolResultEvent):
@@ -95,6 +130,49 @@ def _result_count(content: Any) -> int | None:
         if isinstance(results, list):
             return len(results)
     return None
+
+
+async def _send_model_selection(events: EventSender, trace: ModelTrace) -> None:
+    if trace.selected is None:
+        return
+
+    if trace.selected.provider == "fallback" and trace.fallback_reason:
+        await events.send(
+            "model.fallback",
+            provider=trace.selected.provider,
+            model=trace.selected.model,
+            url=trace.selected.url,
+            reason=trace.fallback_reason,
+            latency_ms=trace.selected_latency_ms,
+        )
+
+    await events.send(
+        "model.selected",
+        provider=trace.selected.provider,
+        model=trace.selected.model,
+        url=trace.selected.url,
+        latency_ms=trace.selected_latency_ms,
+    )
+
+
+def _has_stream_token(event: Any) -> bool:
+    if isinstance(event, PartStartEvent):
+        return (
+            isinstance(event.part, ThinkingPart)
+            and bool(event.part.content)
+            or isinstance(event.part, TextPart)
+            and bool(event.part.content)
+        )
+
+    if isinstance(event, PartDeltaEvent):
+        return (
+            isinstance(event.delta, ThinkingPartDelta)
+            and bool(event.delta.content_delta)
+            or isinstance(event.delta, TextPartDelta)
+            and bool(event.delta.content_delta)
+        )
+
+    return False
 
 
 def _result_preview(content: Any) -> list[dict[str, Any]] | None:
