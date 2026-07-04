@@ -25,6 +25,12 @@ export type ClientUserMessage = {
   type: "user.message";
   message: string;
   conversation_id?: string;
+  history?: ChatHistoryMessage[];
+};
+
+export type ChatHistoryMessage = {
+  role: MessageRole;
+  content: string;
 };
 
 export type ModelProviderState = {

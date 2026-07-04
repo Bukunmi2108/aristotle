@@ -14,6 +14,7 @@ import {
   titleFromPrompt,
 } from "./storage";
 import type {
+  ChatHistoryMessage,
   ChatMessage,
   Conversation,
   MessagePart,
@@ -23,6 +24,9 @@ import type {
   ServicesResponse,
   ToolResultPreview,
 } from "./types";
+
+const MAX_HISTORY_MESSAGES = 24;
+const MAX_HISTORY_CHARS = 24_000;
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -108,6 +112,7 @@ function App() {
     }
 
     stopStream("stopped");
+    const history = buildChatHistory(activeConversation.messages);
 
     const now = new Date().toISOString();
     const userMessage: ChatMessage = {
@@ -143,6 +148,7 @@ function App() {
         type: "user.message",
         message: prompt,
         conversation_id: activeConversation.id,
+        history,
       },
       (serverEvent) =>
         handleServerEvent(
@@ -580,6 +586,47 @@ function findLastServiceStatusIndex(parts: MessagePart[], labels: string[]) {
     }
   }
   return -1;
+}
+
+function buildChatHistory(messages: ChatMessage[]): ChatHistoryMessage[] {
+  const history: ChatHistoryMessage[] = [];
+  let remainingChars = MAX_HISTORY_CHARS;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.status && message.status !== "complete") {
+      continue;
+    }
+
+    const content = historyContent(message);
+    if (!content) {
+      continue;
+    }
+
+    const trimmed =
+      content.length > remainingChars
+        ? content.slice(content.length - remainingChars).trim()
+        : content;
+    if (!trimmed) {
+      break;
+    }
+
+    history.push({ role: message.role, content: trimmed });
+    remainingChars -= trimmed.length;
+    if (history.length >= MAX_HISTORY_MESSAGES || remainingChars <= 0) {
+      break;
+    }
+  }
+
+  return history.reverse();
+}
+
+function historyContent(message: ChatMessage): string {
+  const content =
+    message.role === "assistant"
+      ? message.content || textFromParts(message.parts ?? [])
+      : message.content;
+  return (content || "").trim();
 }
 
 function textFromParts(parts: MessagePart[]): string {

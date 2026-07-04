@@ -44,10 +44,16 @@ class ChatOptions(BaseModel):
     max_search_results: int = Field(default=5, ge=1, le=10)
 
 
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=12000)
+
+
 class ClientUserMessage(BaseModel):
     type: Literal["user.message"]
     message: str = Field(min_length=1, max_length=12000)
     conversation_id: str | None = None
+    history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=24)
     options: ChatOptions = Field(default_factory=ChatOptions)
 
 

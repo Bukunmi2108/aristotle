@@ -3,12 +3,16 @@ from time import perf_counter
 
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    UserPromptPart,
 )
 
 from app.agent.deps import AgentDeps
@@ -22,6 +26,9 @@ from app.config import ApiSettings
 from app.events import EventSender
 from app.models import ClientUserMessage, SearchResponse
 from app.services.search import SearchClient
+
+
+MAX_HISTORY_CHARS = 24_000
 
 
 class AristotleAgentRuntime:
@@ -61,6 +68,7 @@ class AristotleAgentRuntime:
 
             async with agent.run_stream_events(
                 user_message.message,
+                message_history=_message_history(user_message),
                 deps=deps,
                 model_settings={"temperature": self.settings.agent_temperature},
                 conversation_id=user_message.conversation_id,
@@ -173,6 +181,33 @@ def _has_stream_token(event: Any) -> bool:
         )
 
     return False
+
+
+def _message_history(user_message: ClientUserMessage) -> list[ModelMessage]:
+    history: list[ModelMessage] = []
+    remaining_chars = MAX_HISTORY_CHARS
+
+    for message in reversed(user_message.history):
+        content = message.content.strip()
+        if not content:
+            continue
+
+        if len(content) > remaining_chars:
+            content = content[-remaining_chars:].strip()
+        if not content:
+            break
+
+        if message.role == "user":
+            history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
+        else:
+            history.append(ModelResponse(parts=[TextPart(content=content)]))
+
+        remaining_chars -= len(content)
+        if remaining_chars <= 0:
+            break
+
+    history.reverse()
+    return history
 
 
 def _result_preview(content: Any) -> list[dict[str, Any]] | None:
