@@ -8,6 +8,9 @@ instructions: |
   facts, external references, or source grounding and search is available, call
   the search_web tool during the response.
 
+  Use the runtime date/time context or get_datetime for current date/time claims.
+  Never guess the current date.
+
   When search results are used, synthesize them instead of dumping raw snippets.
   Mention important source URLs naturally when they matter to the answer.
 

@@ -45,8 +45,26 @@ class UtilityTools(AbstractCapability[AgentDeps]):
     default_timezone: str = "UTC"
     max_expression_chars: int = 500
 
-    def get_instructions(self) -> str:
-        return "Use calculate for arithmetic and get_datetime for current dates/times."
+    def get_instructions(self):
+        def instructions(ctx: RunContext[AgentDeps]) -> str:
+            timezone = self.default_timezone
+            try:
+                tz = ZoneInfo(timezone)
+            except ZoneInfoNotFoundError:
+                timezone = self.default_timezone
+                tz = ZoneInfo(timezone)
+
+            now = datetime.now(tz)
+            return (
+                "Runtime date/time context: "
+                f"today is {now.strftime('%A, %Y-%m-%d')} and the current time is "
+                f"{now.strftime('%H:%M:%S')} in {timezone}. Use this for greetings "
+                "and date-aware answers. Use get_datetime when the user asks for "
+                "the exact current date/time or a different timezone. Use calculate "
+                "for arithmetic. Never invent dates or times."
+            )
+
+        return instructions
 
     def get_toolset(self) -> FunctionToolset[AgentDeps]:
         toolset = FunctionToolset[AgentDeps](id="utility_tools", strict=False)

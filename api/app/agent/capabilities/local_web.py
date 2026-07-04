@@ -122,10 +122,15 @@ class LocalWebTools(AbstractCapability[AgentDeps]):
                     content_type=content_type,
                 )
             except Exception as exc:
-                await ctx.deps.events.send(
-                    "tool.error", tool="fetch_url", message=str(exc)
+                message = f"Fetch failed for {url}: {exc}"
+                return FetchUrlResult(
+                    url=url,
+                    title=None,
+                    content=message,
+                    content_chars=len(message),
+                    truncated=False,
+                    content_type=None,
                 )
-                raise
 
         return toolset
 

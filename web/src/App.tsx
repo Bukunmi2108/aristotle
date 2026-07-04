@@ -181,13 +181,12 @@ function App() {
 
     if (event.type === "service.ready") {
       setRunState("streaming");
-      appendTool(conversationId, assistantId, {
-        id: `${event.type}-${event.sequence}`,
-        type: "tool",
-        label: event.service ? `${event.service} ready` : "service ready",
-        status: "complete",
-        timestamp: event.timestamp,
-      });
+      completeServiceStatus(
+        conversationId,
+        assistantId,
+        event.service,
+        event.timestamp,
+      );
       return;
     }
 
@@ -360,6 +359,41 @@ function App() {
     });
   }
 
+  function completeServiceStatus(
+    conversationId: string,
+    assistantId: string,
+    service?: string,
+    timestamp?: string,
+  ) {
+    updateAssistantParts(conversationId, assistantId, (parts) => {
+      const next = [...parts];
+      const labels = service
+        ? [`${service} checking`, `${service} waking`]
+        : ["service.checking", "service.waking"];
+      const index = findLastServiceStatusIndex(next, labels);
+      const readyLabel = service ? `${service} ready` : "service ready";
+
+      if (index >= 0 && next[index].type === "tool") {
+        next[index] = {
+          ...next[index],
+          label: readyLabel,
+          status: "complete",
+          timestamp: timestamp || next[index].timestamp,
+        };
+      } else {
+        next.push({
+          id: `service-ready-${crypto.randomUUID()}`,
+          type: "tool",
+          label: readyLabel,
+          status: "complete",
+          timestamp: timestamp || new Date().toISOString(),
+        });
+      }
+
+      return next;
+    });
+  }
+
   function failTool(
     conversationId: string,
     assistantId: string,
@@ -527,6 +561,20 @@ function findLastToolIndex(
       part.type === "tool" &&
       (!toolName || part.label === toolName) &&
       (!status || part.status === status)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findLastServiceStatusIndex(parts: MessagePart[], labels: string[]) {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (
+      part.type === "tool" &&
+      part.status === "running" &&
+      labels.includes(part.label)
     ) {
       return index;
     }
