@@ -3,6 +3,8 @@ import type {
   ServerEvent,
   ServiceStatus,
   ServicesResponse,
+  StoredConversationsResponse,
+  StoredMessagesResponse,
 } from "./types";
 
 const DEFAULT_HTTP_BASE_URL = "https://bukunmi2108-aristotle-api.hf.space";
@@ -22,6 +24,53 @@ export async function fetchServices(): Promise<ServicesResponse> {
     throw new Error(`Service status failed with ${response.status}`);
   }
   return response.json() as Promise<ServicesResponse>;
+}
+
+export async function fetchConversations(): Promise<StoredConversationsResponse> {
+  const response = await fetch(`${agentHttpBaseUrl}/conversations`);
+  if (!response.ok) {
+    throw new Error(`Conversation history failed with ${response.status}`);
+  }
+  return response.json() as Promise<StoredConversationsResponse>;
+}
+
+export async function fetchConversationMessages(
+  conversationId: string,
+): Promise<StoredMessagesResponse> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/messages`,
+  );
+  if (!response.ok) {
+    throw new Error(`Conversation messages failed with ${response.status}`);
+  }
+  return response.json() as Promise<StoredMessagesResponse>;
+}
+
+export async function renameConversation(
+  conversationId: string,
+  title: string,
+): Promise<void> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/conversations/${encodeURIComponent(conversationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Rename conversation failed with ${response.status}`);
+  }
+}
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw new Error(`Delete conversation failed with ${response.status}`);
+  }
 }
 
 export function connectChat(

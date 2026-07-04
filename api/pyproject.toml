@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Agent API and WebSocket orchestration service for Aristotle"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncpg>=0.31.0",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
     "pydantic>=2.10.0",

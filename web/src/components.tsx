@@ -4,13 +4,19 @@ import {
   ChevronRight,
   Copy,
   Loader2,
+  Menu,
+  MoreHorizontal,
   Pause,
+  Pencil,
   Plus,
+  Search,
   Send,
   TriangleAlert,
+  Trash2,
   Wrench,
+  X,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -43,6 +49,7 @@ type AppHeaderProps = {
   runState: RunState;
   services: ServicesResponse | null;
   modelProvider: ModelProviderState | null;
+  onOpenSidebar: () => void;
   onNewChat: () => void;
 };
 
@@ -50,11 +57,20 @@ export function AppHeader({
   runState,
   services,
   modelProvider,
+  onOpenSidebar,
   onNewChat,
 }: AppHeaderProps) {
   return (
     <header className="app-header">
       <div className="app-header__identity">
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onOpenSidebar}
+          title="Open conversation history"
+        >
+          <Menu size={18} strokeWidth={iconStroke} />
+        </button>
         <div className="app-header__title-block">
           <h1 className="app-header__title">Aristotle</h1>
         </div>
@@ -67,6 +83,7 @@ export function AppHeader({
         </div>
         <button
           className="icon-button icon-button--primary"
+          type="button"
           onClick={onNewChat}
           title="New chat"
         >
@@ -75,6 +92,250 @@ export function AppHeader({
       </div>
     </header>
   );
+}
+
+type HistorySidebarProps = {
+  isOpen: boolean;
+  conversations: Conversation[];
+  activeConversationId: string;
+  onClose: () => void;
+  onNewChat: () => void;
+  onSelectConversation: (conversationId: string) => void;
+  onRenameConversation: (conversationId: string, title: string) => void;
+  onDeleteConversation: (conversationId: string) => void;
+};
+
+export function HistorySidebar({
+  isOpen,
+  conversations,
+  activeConversationId,
+  onClose,
+  onNewChat,
+  onSelectConversation,
+  onRenameConversation,
+  onDeleteConversation,
+}: HistorySidebarProps) {
+  const [query, setQuery] = useState("");
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(
+    null,
+  );
+  const [renameDraft, setRenameDraft] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const renameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!editingConversationId) return;
+    renameRef.current?.focus();
+    renameRef.current?.select();
+  }, [editingConversationId]);
+
+  const visibleConversations = useMemo(() => {
+    const sorted = [...conversations].sort(
+      (first, second) =>
+        dateTime(second.updatedAt || second.createdAt) -
+        dateTime(first.updatedAt || first.createdAt),
+    );
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return sorted;
+    return sorted.filter((conversation) =>
+      conversationMatchesSearch(conversation, normalizedQuery),
+    );
+  }, [conversations, query]);
+
+  if (!isOpen) return null;
+
+  function beginRename(conversation: Conversation) {
+    setEditingConversationId(conversation.id);
+    setRenameDraft(conversation.title);
+  }
+
+  function cancelRename() {
+    setEditingConversationId(null);
+    setRenameDraft("");
+  }
+
+  function commitRename(conversation: Conversation) {
+    const cleaned = renameDraft.trim();
+    if (!cleaned || cleaned === conversation.title) {
+      cancelRename();
+      return;
+    }
+
+    onRenameConversation(conversation.id, cleaned);
+    cancelRename();
+  }
+
+  return (
+    <>
+      <button
+        className="history-backdrop"
+        type="button"
+        aria-label="Close conversation history"
+        onClick={onClose}
+      />
+      <aside className="history-sidebar" aria-label="Conversation history">
+        <div className="history-sidebar__header">
+          <strong>Aristotle</strong>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            title="Close"
+          >
+            <X size={18} strokeWidth={iconStroke} />
+          </button>
+        </div>
+
+        <button className="history-new-button" type="button" onClick={onNewChat}>
+          <Plus size={16} strokeWidth={iconStroke} />
+          New chat
+        </button>
+
+        <label className="history-search">
+          <Search size={15} strokeWidth={iconStroke} />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search chats"
+          />
+          <span>Ctrl K</span>
+        </label>
+
+        <nav className="history-list" aria-label="Conversations">
+          <section className="history-section">
+            <h2>{query.trim() ? "Results" : "Recent"}</h2>
+            {visibleConversations.length ? (
+              <div className="history-section__items">
+                {visibleConversations.map((conversation) => {
+                  const isActive = conversation.id === activeConversationId;
+                  return (
+                    <div
+                      key={conversation.id}
+                      className={cx(
+                        "history-row",
+                        isActive && "history-row--active",
+                        editingConversationId === conversation.id &&
+                          "history-row--editing",
+                      )}
+                    >
+                      {editingConversationId === conversation.id ? (
+                        <form
+                          className="history-row__rename"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            commitRename(conversation);
+                          }}
+                        >
+                          <input
+                            ref={renameRef}
+                            value={renameDraft}
+                            onChange={(event) => setRenameDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelRename();
+                              }
+                            }}
+                          />
+                          <button
+                            className="history-row__rename-action"
+                            type="submit"
+                            title="Save name"
+                          >
+                            <Check size={14} strokeWidth={iconStroke} />
+                          </button>
+                          <button
+                            className="history-row__rename-action"
+                            type="button"
+                            onClick={cancelRename}
+                            title="Cancel rename"
+                          >
+                            <X size={14} strokeWidth={iconStroke} />
+                          </button>
+                        </form>
+                      ) : (
+                        <>
+                          <button
+                            className="history-row__main"
+                            type="button"
+                            onClick={() => onSelectConversation(conversation.id)}
+                            title={conversation.title}
+                          >
+                            <span className="history-row__title">
+                              {conversation.title}
+                            </span>
+                          </button>
+                          <details className="history-row__menu">
+                            <summary
+                              aria-label={`Conversation actions for ${conversation.title}`}
+                            >
+                              <MoreHorizontal
+                                size={16}
+                                strokeWidth={iconStroke}
+                              />
+                            </summary>
+                            <div className="history-row__menu-popover">
+                              <button
+                                type="button"
+                                onClick={() => beginRename(conversation)}
+                              >
+                                <Pencil size={14} strokeWidth={iconStroke} />
+                                Rename
+                              </button>
+                              <button
+                                className="history-row__menu-danger"
+                                type="button"
+                                onClick={() => onDeleteConversation(conversation.id)}
+                              >
+                                <Trash2 size={14} strokeWidth={iconStroke} />
+                                Delete
+                              </button>
+                            </div>
+                          </details>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="history-empty">No chats found</div>
+            )}
+          </section>
+        </nav>
+      </aside>
+    </>
+  );
+}
+
+function dateTime(value: string): number {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function conversationMatchesSearch(
+  conversation: Conversation,
+  normalizedQuery: string,
+): boolean {
+  return conversation.title.toLowerCase().includes(normalizedQuery);
 }
 
 function ModelProviderTag({

@@ -1,9 +1,17 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { connectChat, fetchServices } from "./api";
+import {
+  connectChat,
+  deleteConversation as deleteServerConversation,
+  fetchConversationMessages,
+  fetchConversations,
+  fetchServices,
+  renameConversation as renameServerConversation,
+} from "./api";
 import {
   AppHeader,
   Composer,
+  HistorySidebar,
   MessageList,
   ServiceAlert,
 } from "./components";
@@ -22,6 +30,8 @@ import type {
   RunState,
   ServerEvent,
   ServicesResponse,
+  StoredConversation,
+  StoredMessage,
   ToolResultPreview,
 } from "./types";
 
@@ -41,6 +51,7 @@ function App() {
   const [modelProvider, setModelProvider] =
     useState<ModelProviderState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({});
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
 
@@ -55,6 +66,7 @@ function App() {
 
   useEffect(() => {
     void refreshServices();
+    void hydrateServerHistory();
   }, []);
 
   useEffect(() => {
@@ -74,6 +86,32 @@ function App() {
       setServiceError(
         error instanceof Error ? error.message : "Status check failed.",
       );
+    }
+  }
+
+  async function hydrateServerHistory() {
+    try {
+      const response = await fetchConversations();
+      if (!response.conversations.length) {
+        return;
+      }
+
+      const hydrated = await Promise.all(
+        response.conversations.map(async (conversation) => {
+          const messages = await fetchConversationMessages(conversation.id);
+          return conversationFromServer(conversation, messages.messages);
+        }),
+      );
+
+      setConversations(hydrated);
+      setActiveId((current) =>
+        hydrated.some((conversation) => conversation.id === current)
+          ? current
+          : hydrated[0]?.id || "",
+      );
+    } catch {
+      // Persistence is optional in local/dev deployments. Browser storage remains
+      // the fallback when the server has no DB configured yet.
     }
   }
 
@@ -97,6 +135,71 @@ function App() {
     setActiveId(conversation.id);
     setComposer("");
     setRunState("idle");
+    setSidebarOpen(false);
+  }
+
+  function selectConversation(conversationId: string) {
+    if (conversationId === activeId) {
+      setSidebarOpen(false);
+      return;
+    }
+    stopStream("stopped");
+    setActiveId(conversationId);
+    setRunState("idle");
+    setSidebarOpen(false);
+  }
+
+  async function renameConversationById(conversationId: string, title: string) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation) return;
+
+    const cleaned = title.trim();
+    if (!cleaned || cleaned === conversation.title) {
+      return;
+    }
+
+    updateConversation(conversationId, (current) => ({
+      ...current,
+      title: cleaned,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    try {
+      await renameServerConversation(conversationId, cleaned);
+    } catch {
+      // Local history still supports rename when server persistence is disabled.
+    }
+  }
+
+  async function deleteConversationById(conversationId: string) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation) return;
+    if (!window.confirm(`Delete "${conversation.title}"?`)) {
+      return;
+    }
+
+    const deletedId = conversation.id;
+    const deletedActiveConversation = deletedId === activeId;
+    if (deletedActiveConversation) {
+      stopStream("stopped");
+    }
+
+    const remaining = conversations.filter(
+      (conversation) => conversation.id !== deletedId,
+    );
+    const nextConversations = remaining.length ? remaining : [createConversation()];
+    setConversations(nextConversations);
+    if (deletedActiveConversation) {
+      setActiveId(nextConversations[0]?.id || "");
+      setRunState("idle");
+    }
+    setSidebarOpen(false);
+
+    try {
+      await deleteServerConversation(deletedId);
+    } catch {
+      // Local history still supports deletion when server persistence is disabled.
+    }
   }
 
   function submitMessage(event: FormEvent) {
@@ -526,11 +629,26 @@ function App() {
 
   return (
     <main className="app-root">
+      <HistorySidebar
+        isOpen={sidebarOpen}
+        conversations={conversations}
+        activeConversationId={activeId}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={createNewChat}
+        onSelectConversation={selectConversation}
+        onRenameConversation={(conversationId, title) =>
+          void renameConversationById(conversationId, title)
+        }
+        onDeleteConversation={(conversationId) =>
+          void deleteConversationById(conversationId)
+        }
+      />
       <section className="app-shell">
         <AppHeader
           runState={runState}
           services={services}
           modelProvider={modelProvider}
+          onOpenSidebar={() => setSidebarOpen(true)}
           onNewChat={createNewChat}
         />
 
@@ -586,6 +704,52 @@ function findLastServiceStatusIndex(parts: MessagePart[], labels: string[]) {
     }
   }
   return -1;
+}
+
+function conversationFromServer(
+  conversation: StoredConversation,
+  messages: StoredMessage[],
+): Conversation {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.created_at,
+    updatedAt: conversation.updated_at,
+    messages: messages.map(messageFromServer),
+  };
+}
+
+function messageFromServer(message: StoredMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content || "",
+    createdAt: message.created_at,
+    status: normalizeMessageStatus(message.status),
+    parts:
+      message.role === "assistant" && message.content
+        ? [
+            {
+              id: `text-${message.id}`,
+              type: "text",
+              text: message.content,
+              status: message.status === "streaming" ? "streaming" : "complete",
+            },
+          ]
+        : undefined,
+  };
+}
+
+function normalizeMessageStatus(status?: string): ChatMessage["status"] {
+  if (
+    status === "streaming" ||
+    status === "complete" ||
+    status === "error" ||
+    status === "stopped"
+  ) {
+    return status;
+  }
+  return "complete";
 }
 
 function buildChatHistory(messages: ChatMessage[]): ChatHistoryMessage[] {

@@ -1,0 +1,37 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8600:7860"
+    environment:
+      DATABASE_URL: postgresql://aristotle:aristotle@postgres:5432/aristotle
+      RESET_DB_ON_START: "true"
+      DATA_RETENTION_DAYS: "7"
+      ARISTOTLE_SEARCH_BASE_URL: ${ARISTOTLE_SEARCH_BASE_URL:-http://host.docker.internal:8300}
+      PRIMARY_MODEL_BASE_URL: ${PRIMARY_MODEL_BASE_URL:-https://api-inference.modelscope.ai/v1}
+      PRIMARY_MODEL_NAME: ${PRIMARY_MODEL_NAME:-Qwen/Qwen3-235B-A22B-Instruct-2507}
+      PRIMARY_MODEL_API_KEY: ${PRIMARY_MODEL_API_KEY:-}
+      MODELSCOPE_API_KEY: ${MODELSCOPE_API_KEY:-}
+      FALLBACK_MODEL_BASE_URL: ${FALLBACK_MODEL_BASE_URL:-https://bukunmi2108-aristotle-model.hf.space/v1}
+      FALLBACK_MODEL_NAME: ${FALLBACK_MODEL_NAME:-/models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf}
+      FALLBACK_MODEL_API_KEY: ${FALLBACK_MODEL_API_KEY:-unused}
+      MODEL_FALLBACK_ENABLED: ${MODEL_FALLBACK_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aristotle
+      POSTGRES_USER: aristotle
+      POSTGRES_PASSWORD: aristotle
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aristotle -d aristotle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data

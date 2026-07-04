@@ -28,6 +28,9 @@ class ApiSettings:
     search_request_timeout_seconds: float
     web_fetch_timeout_seconds: float
     agent_temperature: float
+    database_url: str | None
+    reset_db_on_start: bool
+    data_retention_days: int
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
@@ -75,6 +78,9 @@ class ApiSettings:
                 os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "20")
             ),
             agent_temperature=float(os.getenv("AGENT_TEMPERATURE", "0.2")),
+            database_url=_optional_env("DATABASE_URL"),
+            reset_db_on_start=_bool_env("RESET_DB_ON_START", False),
+            data_retention_days=int(os.getenv("DATA_RETENTION_DAYS", "7")),
         )
 
     @property

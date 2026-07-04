@@ -14,6 +14,33 @@ export type ServicesResponse = {
   search: ServiceStatus;
 };
 
+export type StoredConversation = {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoredMessage = {
+  id: string;
+  conversation_id: string;
+  role: MessageRole;
+  content?: string | null;
+  status: "streaming" | "complete" | "error" | "stopped" | string;
+  parent_message_id?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+};
+
+export type StoredConversationsResponse = {
+  conversations: StoredConversation[];
+};
+
+export type StoredMessagesResponse = {
+  messages: StoredMessage[];
+};
+
 export type RunState =
   | "idle"
   | "connecting"

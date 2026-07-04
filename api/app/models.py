@@ -40,6 +40,10 @@ class ReadyResponse(BaseModel):
     services: ServicesResponse
 
 
+class RenameConversationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
 class ChatOptions(BaseModel):
     use_search: bool = True
     max_search_results: int = Field(default=5, ge=1, le=10)

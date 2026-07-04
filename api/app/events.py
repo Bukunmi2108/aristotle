@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any, Literal
+from uuid import uuid4
+
 from pydantic import BaseModel, Field
 
 
@@ -24,10 +26,13 @@ EventType = Literal[
 
 
 class Event(BaseModel):
+    event_id: str = Field(default_factory=lambda: f"evt_{uuid4().hex}")
     type: EventType
     sequence: int
     timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     conversation_id: str | None = None
+    run_id: str | None = None
+    message_id: str | None = None
     service: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -44,10 +49,21 @@ class Event(BaseModel):
 
 
 class EventSender:
-    def __init__(self, send_json, conversation_id: str):
+    def __init__(
+        self,
+        send_json,
+        conversation_id: str,
+        *,
+        run_id: str | None = None,
+        message_id: str | None = None,
+        store: Any = None,
+    ):
         self._send_json = send_json
         self._sequence = 0
         self._conversation_id = conversation_id
+        self._run_id = run_id
+        self._message_id = message_id
+        self._store = store
 
     async def send(self, event_type: EventType, **kwargs: Any) -> None:
         self._sequence += 1
@@ -55,6 +71,11 @@ class EventSender:
             type=event_type,
             sequence=self._sequence,
             conversation_id=self._conversation_id,
+            run_id=kwargs.pop("run_id", self._run_id),
+            message_id=kwargs.pop("message_id", self._message_id),
             **kwargs,
         )
-        await self._send_json(event.model_dump(exclude_none=True))
+        payload = event.model_dump(exclude_none=True)
+        if self._store is not None:
+            await self._store.append_event(payload)
+        await self._send_json(payload)

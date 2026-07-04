@@ -31,7 +31,45 @@ async def chat_websocket(websocket: WebSocket) -> None:
         user_message = user_message.model_copy(
             update={"conversation_id": conversation_id}
         )
-        events = EventSender(websocket.send_json, conversation_id=conversation_id)
+        store = getattr(websocket.app.state, "store", None)
+        run_id = f"run_{uuid4().hex}"
+        user_message_id = f"msg_{uuid4().hex}"
+        assistant_message_id = f"msg_{uuid4().hex}"
+
+        if store is not None:
+            await store.ensure_conversation(
+                conversation_id,
+                _conversation_title(user_message.message),
+            )
+            await store.create_message(
+                message_id=user_message_id,
+                conversation_id=conversation_id,
+                role="user",
+                content=user_message.message,
+                status="complete",
+            )
+            await store.create_message(
+                message_id=assistant_message_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                content="",
+                status="streaming",
+                parent_message_id=user_message_id,
+            )
+            await store.create_run(
+                run_id=run_id,
+                conversation_id=conversation_id,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+            )
+
+        events = EventSender(
+            websocket.send_json,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_id=assistant_message_id,
+            store=store,
+        )
 
         await events.send("session.started")
 
@@ -46,6 +84,14 @@ async def chat_websocket(websocket: WebSocket) -> None:
             search_client=search_client, settings=SETTINGS
         )
         final_message = await agent_runtime.stream_response(user_message, events)
+
+        if store is not None:
+            await store.update_message(
+                message_id=assistant_message_id,
+                content=final_message,
+                status="complete",
+            )
+            await store.complete_run(run_id, "complete")
 
         await events.send("message.completed", message=final_message)
         await events.send("session.completed")
@@ -66,6 +112,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 }
             )
     except ServiceWakeTimeoutError as exc:
+        await _mark_failed_run(websocket, events, str(exc))
         if events is not None:
             await events.send(
                 "error",
@@ -84,6 +131,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 }
             )
     except Exception as exc:
+        await _mark_failed_run(websocket, events, str(exc))
         if events is not None:
             await events.send("error", code="internal_error", message=str(exc))
         else:
@@ -95,3 +143,33 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     "message": str(exc),
                 }
             )
+
+
+async def _mark_failed_run(
+    websocket: WebSocket,
+    events: EventSender | None,
+    message: str,
+) -> None:
+    if events is None:
+        return
+    store = getattr(websocket.app.state, "store", None)
+    if store is None:
+        return
+
+    run_id = getattr(events, "_run_id", None)
+    message_id = getattr(events, "_message_id", None)
+    if run_id is not None:
+        await store.complete_run(run_id, "error", message)
+    if message_id is not None:
+        await store.update_message(
+            message_id=message_id,
+            content="",
+            status="error",
+        )
+
+
+def _conversation_title(message: str) -> str:
+    title = " ".join(message.strip().split())
+    if len(title) <= 56:
+        return title or "New chat"
+    return f"{title[:53].rstrip()}..."
