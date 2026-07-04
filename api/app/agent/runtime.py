@@ -63,6 +63,10 @@ class AristotleAgentRuntime:
                     "max_search_results": options.max_search_results,
                     "primary_model": trace.primary.model,
                     "fallback_model": trace.fallback.model if trace.fallback else None,
+                    "history_messages": len(user_message.history),
+                    "history_chars": sum(
+                        len(message.content) for message in user_message.history
+                    ),
                 },
             )
 
