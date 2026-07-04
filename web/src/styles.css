@@ -623,13 +623,47 @@ input:focus-visible {
 
 .tool-trace__header {
   display: inline-flex;
+  width: fit-content;
   align-items: center;
   gap: 7px;
-  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
+  cursor: pointer;
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.02em;
+  list-style: none;
+  padding: 2px 5px 2px 0;
+  transition:
+    background-color 160ms var(--ease),
+    color 160ms var(--ease);
+}
+
+.tool-trace__header::-webkit-details-marker {
+  display: none;
+}
+
+.tool-trace__header::marker {
+  content: "";
+}
+
+.tool-trace__header:hover {
+  background: rgb(251 251 247 / 0.72);
+  color: var(--text-soft);
+}
+
+.tool-trace__chevron {
+  display: inline-flex;
+  color: currentColor;
+  transition: transform 160ms var(--ease);
+}
+
+.tool-trace[open] .tool-trace__chevron {
+  transform: rotate(90deg);
+}
+
+.tool-trace[open] .tool-trace__header {
+  margin-bottom: 8px;
 }
 
 .tool-trace__list {

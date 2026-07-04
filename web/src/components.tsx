@@ -10,6 +10,7 @@ import {
   TriangleAlert,
   Wrench,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -240,7 +241,11 @@ function MessageBubble({
     message.parts?.filter((part) => part.type === "reasoning") ?? [];
   const bodyParts =
     message.parts?.filter((part) => part.type !== "reasoning") ?? [];
+  const hasText = bodyParts.some(
+    (part) => part.type === "text" && part.text.trim().length > 0,
+  );
   const isDetailsOpen = detailsOpen[message.id] ?? message.status === "streaming";
+  const toolTraceOpen = !hasText;
 
   if (message.role === "user") {
     return <div className="message message--user">{message.content}</div>;
@@ -289,7 +294,11 @@ function MessageBubble({
 
         <div className="assistant-message__parts">
           {groupMessageParts(bodyParts).map((group) => (
-            <MessagePartGroupView key={group.id} group={group} />
+            <MessagePartGroupView
+              key={group.id}
+              group={group}
+              toolTraceOpen={toolTraceOpen}
+            />
           ))}
           {message.status === "streaming" && <span className="stream-caret" />}
         </div>
@@ -307,9 +316,15 @@ type MessagePartGroup =
   | { id: string; type: "single"; part: MessagePart }
   | { id: string; type: "tools"; parts: Extract<MessagePart, { type: "tool" }>[] };
 
-function MessagePartGroupView({ group }: { group: MessagePartGroup }) {
+function MessagePartGroupView({
+  group,
+  toolTraceOpen,
+}: {
+  group: MessagePartGroup;
+  toolTraceOpen: boolean;
+}) {
   if (group.type === "tools") {
-    return <ToolTrace parts={group.parts} />;
+    return <ToolTrace parts={group.parts} defaultOpen={toolTraceOpen} />;
   }
 
   return <MessagePartView part={group.part} />;
@@ -333,30 +348,43 @@ function MessagePartView({ part }: { part: MessagePart }) {
 
 function ToolTrace({
   parts,
+  defaultOpen,
 }: {
   parts: Extract<MessagePart, { type: "tool" }>[];
+  defaultOpen: boolean;
 }) {
   const hasRunning = parts.some((part) => part.status === "running");
   const hasError = parts.some((part) => part.status === "error");
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (detailsRef.current) {
+      detailsRef.current.open = defaultOpen;
+    }
+  }, [defaultOpen]);
 
   return (
-    <section
+    <details
+      ref={detailsRef}
       className={cx(
         "tool-trace",
         hasRunning && "tool-trace--running",
         hasError && "tool-trace--error",
       )}
     >
-      <div className="tool-trace__header">
+      <summary className="tool-trace__header">
+        <span className="tool-trace__chevron" aria-hidden="true">
+          <ChevronRight size={13} strokeWidth={iconStroke} />
+        </span>
         <Wrench size={13} strokeWidth={iconStroke} />
         <span>Tool activity</span>
-      </div>
+      </summary>
       <ol className="tool-trace__list">
         {parts.map((part) => (
           <ToolTraceItem key={part.id} part={part} />
         ))}
       </ol>
-    </section>
+    </details>
   );
 }
 
