@@ -21,6 +21,7 @@ class ServiceStatus(BaseModel):
     ok: bool
     service: ServiceName
     url: str
+    model: str | None = None
     latency_ms: int | None = None
     error: str | None = None
 

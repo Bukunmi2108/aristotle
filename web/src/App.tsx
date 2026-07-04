@@ -642,10 +642,10 @@ function providerFromServices(services: ServicesResponse): ModelProviderState | 
   }
 
   const url = services.model.url;
-  if (url.includes("modelscope")) {
+  if (services.model.model || url.includes("modelscope")) {
     return {
       provider: "primary",
-      model: "zai-org/GLM-5.2",
+      model: services.model.model || "primary",
       url,
       source: "status",
     };

@@ -61,6 +61,7 @@ class ModelClient:
                 ok=False,
                 service="model",
                 url=base_url,
+                model=model_name,
                 error="API key is not configured.",
             )
 
@@ -77,6 +78,7 @@ class ModelClient:
                 ok=False,
                 service="model",
                 url=base_url,
+                model=model_name,
                 error=str(exc),
             )
 
@@ -84,6 +86,7 @@ class ModelClient:
             ok=True,
             service="model",
             url=base_url,
+            model=model_name,
             latency_ms=int((perf_counter() - started) * 1000),
         )
 

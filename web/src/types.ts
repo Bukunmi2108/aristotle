@@ -4,6 +4,7 @@ export type ServiceStatus = {
   ok: boolean;
   service: ServiceName;
   url: string;
+  model?: string | null;
   latency_ms?: number | null;
   error?: string | null;
 };
