@@ -18,9 +18,6 @@ from app.models import ClientUserMessage, SearchResponse
 from app.services.search import SearchClient
 
 
-AGENT_MAX_SEARCH_RESULTS = 5
-
-
 class AristotleAgentRuntime:
     def __init__(self, search_client: SearchClient, settings: ApiSettings):
         self.search_client = search_client
@@ -30,21 +27,22 @@ class AristotleAgentRuntime:
         self, user_message: ClientUserMessage, events: EventSender
     ) -> str:
         agent = build_agent(self.settings)
+        options = user_message.options
         deps = AgentDeps(
             search_client=self.search_client,
             http_client=self.search_client.http,
             events=events,
             settings=self.settings,
-            max_search_results=AGENT_MAX_SEARCH_RESULTS,
-            web_tools_enabled=True,
+            max_search_results=options.max_search_results,
+            web_tools_enabled=options.use_search,
         )
         final_parts: list[str] = []
 
         await events.send(
             "agent.started",
             input={
-                "web_tools_enabled": True,
-                "max_search_results": AGENT_MAX_SEARCH_RESULTS,
+                "web_tools_enabled": options.use_search,
+                "max_search_results": options.max_search_results,
             },
         )
 

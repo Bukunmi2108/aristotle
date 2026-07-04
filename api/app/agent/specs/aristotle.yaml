@@ -14,7 +14,6 @@ instructions: |
   Do not invent tool results. If a tool fails, continue with a clear statement
   of what could not be verified.
 model_settings:
-  max_tokens: 1024
   temperature: 0.2
 retries:
   tools: 1

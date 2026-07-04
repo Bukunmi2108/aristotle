@@ -26,7 +26,11 @@ aristotle-api
   /services         model/search status
   /ws/chat          chat WebSocket
 
-aristotle-model
+primary inference provider
+  https://api-inference.modelscope.ai/v1/models
+  https://api-inference.modelscope.ai/v1/chat/completions
+
+fallback aristotle-model
   /v1/models
   /v1/chat/completions
 
@@ -60,9 +64,11 @@ client WebSocket
 `options.use_search=true` gives the model a `search_web` tool and lets the model
 decide when to call it during the response.
 
-The llama.cpp model is wrapped with a custom OpenAI profile so Pydantic AI sends
-compatible request fields and maps streamed `reasoning_content` into thinking
-events.
+The primary provider is ModelScope API Inference using `zai-org/GLM-5.2`. The
+fallback is the existing llama.cpp OpenAI-compatible Space. Both are wrapped
+with OpenAI-compatible Pydantic AI profiles that map streamed
+`reasoning_content` into thinking events. The runtime falls back on quota, rate
+limit, timeout, and provider/server errors.
 
 Custom capabilities are normal Pydantic AI `AbstractCapability` subclasses loaded
 from YAML with `custom_capability_types`. Each related tool group owns its
@@ -84,7 +90,7 @@ Runtime-owned pieces stay in Python because they depend on process state:
 ```text
 app/agent/specs/aristotle.yaml   prompt, settings, capabilities
 app/agent/capabilities/          YAML-loadable capability classes
-app/agent/factory.py             model provider and custom capability wiring
+app/agent/factory.py             primary/fallback model provider wiring
 app/agent/runtime.py             event-stream translation
 ```
 
@@ -131,6 +137,18 @@ docker run --rm --env-file api/.env -p 8400:7860 aristotle-api
 curl http://localhost:8400/
 curl http://localhost:8400/healthz
 curl http://localhost:8400/services
+```
+
+## Model Provider Environment
+
+```sh
+PRIMARY_MODEL_BASE_URL=https://api-inference.modelscope.ai/v1
+PRIMARY_MODEL_NAME=zai-org/GLM-5.2
+MODELSCOPE_API_KEY=...
+MODEL_FALLBACK_ENABLED=true
+FALLBACK_MODEL_BASE_URL=https://bukunmi2108-aristotle-model.hf.space/v1
+FALLBACK_MODEL_NAME=/models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf
+FALLBACK_MODEL_API_KEY=unused
 ```
 
 ## WebSocket Message

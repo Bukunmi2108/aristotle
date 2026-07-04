@@ -38,15 +38,20 @@ class LocalWebTools(AbstractCapability[AgentDeps]):
     max_fetch_chars: int = 12_000
     fetch_timeout_seconds: float = 20
 
-    def get_instructions(self) -> str:
-        return (
-            "Use search_web for current facts, public references, source-grounded "
-            "answers, or when the user asks you to search. Prefer short, direct "
-            "queries. Do not set freshness unless the user explicitly asks for "
-            "today, recent, past month, or past year results. Use exact URLs from "
-            "search results; do not invent citations. If results are empty or weak, "
-            "retry once with a simpler query before answering."
-        )
+    def get_instructions(self):
+        def instructions(ctx: RunContext[AgentDeps]) -> str | None:
+            if not ctx.deps.web_tools_enabled:
+                return None
+            return (
+                "Use search_web for current facts, public references, source-grounded "
+                "answers, or when the user asks you to search. Prefer short, direct "
+                "queries. Do not set freshness unless the user explicitly asks for "
+                "today, recent, past month, or past year results. Use exact URLs from "
+                "search results; do not invent citations. If results are empty or weak, "
+                "retry once with a simpler query before answering."
+            )
+
+        return instructions
 
     def get_toolset(self) -> FunctionToolset[AgentDeps]:
         toolset = FunctionToolset[AgentDeps](
