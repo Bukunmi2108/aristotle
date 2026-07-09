@@ -19,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, FormEvent, SetStateAction } from "react";
+import type { Dispatch, FormEvent, RefObject, SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -385,6 +385,10 @@ export function ServiceAlert({ children }: ServiceAlertProps) {
 
 type MessageListProps = {
   conversation?: Conversation;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  onScroll: () => void;
+  showJumpToLatest: boolean;
+  onJumpToLatest: () => void;
   detailsOpen: Record<string, boolean>;
   setDetailsOpen: Dispatch<SetStateAction<Record<string, boolean>>>;
   onCopyMessage: (message: ChatMessage) => void | Promise<void>;
@@ -397,6 +401,10 @@ type MessageListProps = {
 
 export function MessageList({
   conversation,
+  scrollRef,
+  onScroll,
+  showJumpToLatest,
+  onJumpToLatest,
   detailsOpen,
   setDetailsOpen,
   onCopyMessage,
@@ -407,29 +415,41 @@ export function MessageList({
   onPickPrompt,
 }: MessageListProps) {
   return (
-    <div className="message-scroll">
-      {conversation?.messages.length ? (
-        conversation.messages.map((message, index) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            detailsOpen={detailsOpen}
-            setDetailsOpen={setDetailsOpen}
-            onCopy={() => onCopyMessage(message)}
-            onCopyWithSources={() => onCopyMessageWithSources(message)}
-            onCopySources={() => onCopyMessageSources(message)}
-            onRetry={() => onRetryMessage(message)}
-            canRetry={canRetryAssistantMessage(
-              conversation.messages,
-              index,
-              isRunning,
-            )}
-          />
-        ))
-      ) : (
-        <EmptyState onPickPrompt={onPickPrompt} />
+    <div className="message-scroll-shell">
+      <div ref={scrollRef} className="message-scroll" onScroll={onScroll}>
+        {conversation?.messages.length ? (
+          conversation.messages.map((message, index) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              detailsOpen={detailsOpen}
+              setDetailsOpen={setDetailsOpen}
+              onCopy={() => onCopyMessage(message)}
+              onCopyWithSources={() => onCopyMessageWithSources(message)}
+              onCopySources={() => onCopyMessageSources(message)}
+              onRetry={() => onRetryMessage(message)}
+              canRetry={canRetryAssistantMessage(
+                conversation.messages,
+                index,
+                isRunning,
+              )}
+            />
+          ))
+        ) : (
+          <EmptyState onPickPrompt={onPickPrompt} />
+        )}
+      </div>
+      {showJumpToLatest && (
+        <button
+          className="latest-button"
+          type="button"
+          onClick={onJumpToLatest}
+          title="Jump to latest"
+          aria-label="Jump to latest"
+        >
+          <ChevronDown size={18} strokeWidth={iconStroke} />
+        </button>
       )}
-      <div id="conversation-end" />
     </div>
   );
 }

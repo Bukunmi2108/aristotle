@@ -1,4 +1,11 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   connectChat,
@@ -43,6 +50,7 @@ import type {
 
 const MAX_HISTORY_MESSAGES = 24;
 const MAX_HISTORY_CHARS = 24_000;
+const SCROLL_BOTTOM_THRESHOLD = 72;
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -60,11 +68,61 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
+  const messageScrollRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
     [activeId, conversations],
   );
+  const activeMessageCount = activeConversation?.messages.length ?? 0;
+  const shouldShowJumpToLatest = showJumpToLatest && activeMessageCount > 0;
+
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = "auto") => {
+    const scrollElement = messageScrollRef.current;
+    if (!scrollElement) return;
+
+    autoScrollRef.current = true;
+    setShowJumpToLatest(false);
+    scrollElement.scrollTo({
+      top: scrollElement.scrollHeight,
+      behavior,
+    });
+  }, []);
+
+  const scheduleScrollToLatest = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        scrollToLatest(behavior);
+      });
+    },
+    [scrollToLatest],
+  );
+
+  const updateScrollPin = useCallback(() => {
+    const scrollElement = messageScrollRef.current;
+    if (!scrollElement) return;
+
+    const distanceFromBottom =
+      scrollElement.scrollHeight -
+      scrollElement.scrollTop -
+      scrollElement.clientHeight;
+    const isPinned = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
+
+    autoScrollRef.current = isPinned;
+    setShowJumpToLatest(!isPinned && activeMessageCount > 0);
+  }, [activeMessageCount]);
+
+  const jumpToLatest = useCallback(() => {
+    scrollToLatest("auto");
+  }, [scrollToLatest]);
 
   useEffect(() => {
     saveConversations(conversations);
@@ -76,9 +134,29 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const scrollTarget = document.getElementById("conversation-end");
-    scrollTarget?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeConversation?.messages]);
+    autoScrollRef.current = true;
+    scheduleScrollToLatest("auto");
+  }, [activeId, scheduleScrollToLatest]);
+
+  useEffect(() => {
+    if (!activeMessageCount) {
+      autoScrollRef.current = true;
+      return;
+    }
+
+    if (autoScrollRef.current) {
+      scheduleScrollToLatest("auto");
+    }
+  }, [activeConversation?.messages, activeMessageCount, scheduleScrollToLatest]);
+
+  useEffect(
+    () => () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    },
+    [],
+  );
 
   async function refreshServices() {
     try {
@@ -137,6 +215,8 @@ function App() {
   function createNewChat() {
     stopStream("stopped");
     const conversation = createConversation();
+    autoScrollRef.current = true;
+    setShowJumpToLatest(false);
     setConversations((current) => [conversation, ...current]);
     setActiveId(conversation.id);
     setComposer("");
@@ -150,6 +230,8 @@ function App() {
       return;
     }
     stopStream("stopped");
+    autoScrollRef.current = true;
+    setShowJumpToLatest(false);
     setActiveId(conversationId);
     setRunState("idle");
     setSidebarOpen(false);
@@ -242,6 +324,8 @@ function App() {
     };
 
     setComposer("");
+    autoScrollRef.current = true;
+    setShowJumpToLatest(false);
 
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -828,6 +912,10 @@ function App() {
 
         <MessageList
           conversation={activeConversation}
+          scrollRef={messageScrollRef}
+          onScroll={updateScrollPin}
+          showJumpToLatest={shouldShowJumpToLatest}
+          onJumpToLatest={jumpToLatest}
           detailsOpen={detailsOpen}
           setDetailsOpen={setDetailsOpen}
           onCopyMessage={(message) => void copyMessage(message)}

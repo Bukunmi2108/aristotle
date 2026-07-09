@@ -519,6 +519,7 @@ input:focus-visible {
 .icon-button,
 .send-button,
 .message-action-button,
+.latest-button,
 .prompt-card,
 .reasoning-panel__trigger {
   transition:
@@ -675,12 +676,49 @@ input:focus-visible {
   font-size: 14px;
 }
 
+.message-scroll-shell {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .message-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: clamp(20px, 4vw, 58px) clamp(14px, 4vw, 64px) 28px;
   scrollbar-color: color-mix(in srgb, var(--muted) 42%, transparent) transparent;
+}
+
+.latest-button {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  z-index: 4;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgb(18 23 19 / 0.1);
+  border-radius: 999px;
+  background: rgb(255 255 252 / 0.96);
+  color: var(--text-soft);
+  cursor: pointer;
+  box-shadow:
+    0 14px 34px rgb(32 38 33 / 0.16),
+    inset 0 1px 0 rgb(255 255 255 / 0.9);
+  transform: translateX(-50%);
+}
+
+.latest-button:hover {
+  background: var(--text);
+  color: white;
+  transform: translateX(-50%) translateY(-1px);
+}
+
+.latest-button:active {
+  transform: translateX(-50%) translateY(1px) scale(0.98);
 }
 
 .message,
