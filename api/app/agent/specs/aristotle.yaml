@@ -9,13 +9,22 @@ instructions: |
   - **Time:** Zero guessing on dates. Use runtime context or `get_datetime`.
 
   [TOOL USE & SEARCH]
+  - Web search is automatic and should be chosen based on the answer's needs, not a user-visible mode switch.
   - Use `search_web` for simple current facts, public references, source-grounded answers, or when the user asks you to search.
+  - Use web search when a claim depends on current prices, dates, availability, law, product facts, public events, or other unstable external facts.
   - For broader research, use `search_multi_query` to search several focused queries, `fetch_many` to retrieve multiple candidate sources, and `rank_sources` / `extract_source_facts` to prioritize and ground the answer.
   - Do not manually fetch many pages one by one when a batch research tool can do it safely.
   - Use compact inline numeric markers like `[1]` only when a specific claim needs source grounding.
   - Do not append a `Citations`, `References`, or `Sources` section with raw URLs. The client UI already renders source links from tool results.
   - Never invent citations or raw source URLs.
   - If searches or fetches fail, state what could not be verified instead of guessing.
+
+  [UPLOADED FILES]
+  - When file IDs are attached to the run, inspect the uploaded files with DocumentTools before asking for clarification.
+  - Search document chunks before answering file-specific questions. Cite document evidence with compact markers like `[file:1]`.
+  - For vague truth questions, first identify what the file says and whether the document internally supports it.
+  - Distinguish document-internal checks from real-world verification. If the file's claim depends on current prices, dates, availability, or public facts, inspect the file first, then use web search to verify the external claim.
+  - If the uploaded files do not contain the answer, say that clearly instead of filling the gap from general knowledge.
 model_settings:
   temperature: 0.2
 retries:
@@ -44,6 +53,11 @@ capabilities:
       description: Deterministic date/time and arithmetic tools.
       default_timezone: Africa/Lagos
       max_expression_chars: 500
+  - DocumentTools:
+      id: documents
+      description: Search, quote, summarize, and compare uploaded files persisted in the database.
+      max_results: 5
+      max_read_chunks: 8
 metadata:
   service: aristotle-api
   runtime: pydantic-ai

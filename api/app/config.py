@@ -31,6 +31,10 @@ class ApiSettings:
     database_url: str | None
     reset_db_on_start: bool
     data_retention_days: int
+    file_storage_dir: str
+    max_upload_bytes: int
+    max_parsed_chars: int
+    max_chunks_per_file: int
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
@@ -81,6 +85,10 @@ class ApiSettings:
             database_url=_optional_env("DATABASE_URL"),
             reset_db_on_start=_bool_env("RESET_DB_ON_START", False),
             data_retention_days=int(os.getenv("DATA_RETENTION_DAYS", "7")),
+            file_storage_dir=os.getenv("FILE_STORAGE_DIR", "storage/uploads"),
+            max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+            max_parsed_chars=int(os.getenv("MAX_PARSED_CHARS", "250000")),
+            max_chunks_per_file=int(os.getenv("MAX_CHUNKS_PER_FILE", "250")),
         )
 
     @property

@@ -2,6 +2,8 @@
 **/.env
 !**/.env.example
 docs/
+storage/
+api/storage/
 
 # Frontend
 node_modules/

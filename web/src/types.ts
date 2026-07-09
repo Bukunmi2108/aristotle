@@ -31,6 +31,7 @@ export type StoredMessage = {
   parent_message_id?: string | null;
   created_at: string;
   completed_at?: string | null;
+  attachments?: MessageAttachment[];
 };
 
 export type StoredConversationsResponse = {
@@ -54,6 +55,10 @@ export type ClientUserMessage = {
   message: string;
   conversation_id?: string;
   history?: ChatHistoryMessage[];
+  options?: {
+    max_search_results?: number;
+    file_ids?: string[];
+  };
 };
 
 export type ChatHistoryMessage = {
@@ -78,6 +83,19 @@ export type SourcePreview = {
   url?: string | null;
   domain?: string | null;
   source?: string | null;
+  source_type?: "web" | "document" | string | null;
+  sourceType?: "web" | "document" | string | null;
+  file_id?: string | null;
+  fileId?: string | null;
+  chunk_id?: string | null;
+  chunkId?: string | null;
+  locator?: string | null;
+  page?: number | null;
+  section?: string | null;
+  row_start?: number | null;
+  rowStart?: number | null;
+  row_end?: number | null;
+  rowEnd?: number | null;
   snippet?: string | null;
   status?: "searched" | "fetched" | "ranked" | "cited" | "failed" | string;
   marker?: string | null;
@@ -156,6 +174,7 @@ export type ChatMessage = {
   content?: string;
   createdAt: string;
   status?: "streaming" | "complete" | "error" | "stopped";
+  attachments?: MessageAttachment[];
   parts?: MessagePart[];
   sources?: SourcePreview[];
   metrics?: MessageMetrics;
@@ -177,4 +196,29 @@ export type Conversation = {
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+};
+
+export type FileRecord = {
+  id: string;
+  owner_id?: string | null;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_path: string;
+  uploaded_at: string;
+  parse_status: "pending" | "parsed" | "failed" | string;
+  parse_error?: string | null;
+};
+
+export type MessageAttachment = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  parse_status: "pending" | "parsed" | "failed" | string;
+  parse_error?: string | null;
+};
+
+export type FileUploadResponse = {
+  file: FileRecord;
 };

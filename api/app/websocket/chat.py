@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.agent.runtime import AristotleAgentRuntime
 from app.config import SETTINGS
+from app.db import PersistenceStore
 from app.errors import ServiceWakeTimeoutError
 from app.events import EventSender
 from app.models import ClientUserMessage
@@ -36,10 +37,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
         user_message_id = f"msg_{uuid4().hex}"
         assistant_message_id = f"msg_{uuid4().hex}"
 
+        if store is None and user_message.options.file_ids:
+            raise DocumentScopeError("Document persistence is not configured.")
+
         if store is not None:
             await store.ensure_conversation(
                 conversation_id,
                 _conversation_title(user_message.message),
+            )
+            await _validate_attached_files(
+                store,
+                conversation_id,
+                user_message.options.file_ids,
             )
             await store.create_message(
                 message_id=user_message_id,
@@ -47,6 +56,10 @@ async def chat_websocket(websocket: WebSocket) -> None:
                 role="user",
                 content=user_message.message,
                 status="complete",
+            )
+            await store.attach_files_to_message(
+                message_id=user_message_id,
+                file_ids=user_message.options.file_ids,
             )
             await store.create_message(
                 message_id=assistant_message_id,
@@ -81,7 +94,9 @@ async def chat_websocket(websocket: WebSocket) -> None:
         )
 
         agent_runtime = AristotleAgentRuntime(
-            search_client=search_client, settings=SETTINGS
+            search_client=search_client,
+            settings=SETTINGS,
+            document_store=store,
         )
         final_message = await agent_runtime.stream_response(user_message, events)
 
@@ -109,6 +124,18 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     "sequence": 1,
                     "code": "invalid_message",
                     "message": exc.errors(),
+                }
+            )
+    except DocumentScopeError as exc:
+        if events is not None:
+            await events.send("error", code="invalid_file_scope", message=str(exc))
+        else:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "sequence": 1,
+                    "code": "invalid_file_scope",
+                    "message": str(exc),
                 }
             )
     except ServiceWakeTimeoutError as exc:
@@ -173,3 +200,33 @@ def _conversation_title(message: str) -> str:
     if len(title) <= 56:
         return title or "New chat"
     return f"{title[:53].rstrip()}..."
+
+
+class DocumentScopeError(ValueError):
+    pass
+
+
+async def _validate_attached_files(
+    store: PersistenceStore,
+    conversation_id: str,
+    file_ids: list[str],
+) -> None:
+    if not file_ids:
+        return
+    attached_files = await store.list_files(conversation_id)
+    attached_by_id = {file["id"]: file for file in attached_files}
+    attached_ids = set(attached_by_id)
+    missing = [file_id for file_id in file_ids if file_id not in attached_ids]
+    if missing:
+        raise DocumentScopeError(
+            "File is not attached to this conversation: " + ", ".join(missing)
+        )
+    unparsed = [
+        file_id
+        for file_id in file_ids
+        if attached_by_id[file_id]["parse_status"] != "parsed"
+    ]
+    if unparsed:
+        raise DocumentScopeError(
+            "File is not ready for document tools: " + ", ".join(unparsed)
+        )

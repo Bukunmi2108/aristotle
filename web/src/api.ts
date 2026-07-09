@@ -1,5 +1,6 @@
 import type {
   ClientUserMessage,
+  FileUploadResponse,
   ServerEvent,
   ServiceStatus,
   ServicesResponse,
@@ -44,6 +45,35 @@ export async function fetchConversationMessages(
     throw new Error(`Conversation messages failed with ${response.status}`);
   }
   return response.json() as Promise<StoredMessagesResponse>;
+}
+
+export async function uploadFile(
+  file: File,
+  conversationId?: string,
+): Promise<FileUploadResponse> {
+  const params = new URLSearchParams({ filename: file.name });
+  if (conversationId) {
+    params.set("conversation_id", conversationId);
+  }
+  const response = await fetch(`${agentHttpBaseUrl}/files?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "File upload failed"));
+  }
+  return response.json() as Promise<FileUploadResponse>;
+}
+
+export async function deleteFile(fileId: string): Promise<void> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/files/${encodeURIComponent(fileId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw new Error(`Delete file failed with ${response.status}`);
+  }
 }
 
 export async function renameConversation(
@@ -116,4 +146,19 @@ export function serviceSummary(status: ServiceStatus): string {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+async function errorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const payload = (await response.json()) as { detail?: unknown };
+    if (typeof payload.detail === "string") {
+      return payload.detail;
+    }
+  } catch {
+    // Use the fallback below when the response body is not JSON.
+  }
+  return `${fallback} with ${response.status}`;
 }

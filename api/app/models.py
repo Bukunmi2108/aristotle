@@ -45,8 +45,8 @@ class RenameConversationRequest(BaseModel):
 
 
 class ChatOptions(BaseModel):
-    use_search: bool = True
     max_search_results: int = Field(default=5, ge=1, le=10)
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ChatHistoryMessage(BaseModel):
@@ -82,3 +82,19 @@ class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult]
     metadata: dict
+
+
+class FileRecord(BaseModel):
+    id: str
+    owner_id: str | None = None
+    filename: str
+    mime_type: str
+    size_bytes: int
+    storage_path: str
+    uploaded_at: str
+    parse_status: str
+    parse_error: str | None = None
+
+
+class FileUploadResponse(BaseModel):
+    file: FileRecord

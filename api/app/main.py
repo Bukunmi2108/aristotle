@@ -1,12 +1,23 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+from shutil import rmtree
+from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import SERVICE_NAME, SETTINGS
 from app.db import PersistenceStore, close_store, create_store
+from app.documents import (
+    chunks_to_records,
+    infer_mime_type,
+    parse_document_file,
+    validate_upload,
+)
 from app.models import (
+    FileRecord,
+    FileUploadResponse,
     HealthResponse,
     ReadyResponse,
     RenameConversationRequest,
@@ -59,6 +70,7 @@ async def root() -> RootResponse:
             "services": "/services",
             "chat_websocket": "/ws/chat",
             "conversations": "/conversations",
+            "files": "/files",
             "docs": "/docs",
         },
     )
@@ -133,6 +145,63 @@ async def conversation_messages(conversation_id: str) -> dict:
     return {"messages": await store.list_messages(conversation_id)}
 
 
+@app.post("/files", response_model=FileUploadResponse)
+async def upload_file(
+    request: Request,
+    filename: str = Query(min_length=1, max_length=240),
+    conversation_id: str | None = None,
+) -> FileUploadResponse:
+    store = _require_store()
+    data = await request.body()
+    mime_type = infer_mime_type(
+        filename,
+        request.headers.get("content-type"),
+    )
+    try:
+        validate_upload(filename, len(data), SETTINGS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    file_id = f"file_{uuid4().hex}"
+    upload_dir = Path(SETTINGS.file_storage_dir) / file_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    storage_path = upload_dir / "original"
+    storage_path.write_bytes(data)
+
+    if conversation_id:
+        await store.ensure_conversation(conversation_id, "Document chat")
+
+    file_record = await store.create_file(
+        file_id=file_id,
+        filename=filename,
+        mime_type=mime_type,
+        size_bytes=len(data),
+        storage_path=str(storage_path),
+    )
+    if conversation_id:
+        await store.attach_file_to_conversation(conversation_id, file_id)
+
+    await _parse_and_store_file(store, file_record)
+    refreshed_file = await store.get_file(file_id)
+    return FileUploadResponse(
+        file=FileRecord.model_validate(refreshed_file or file_record),
+    )
+
+
+@app.delete("/files/{file_id}")
+async def delete_file(file_id: str) -> dict:
+    store = _require_store()
+    file_record = await store.get_file(file_id)
+    if file_record is None:
+        raise HTTPException(status_code=404, detail="File not found.")
+    deleted = await store.delete_file(file_id)
+    if deleted:
+        path = Path(file_record["storage_path"]).parent
+        if path.exists():
+            rmtree(path, ignore_errors=True)
+    return {"ok": deleted}
+
+
 @app.get("/runs/{run_id}")
 async def run(run_id: str) -> dict:
     store = _require_store()
@@ -153,3 +222,30 @@ def _require_store() -> PersistenceStore:
     if store is None:
         raise HTTPException(status_code=503, detail="Persistence is not configured.")
     return store
+
+
+async def _parse_and_store_file(
+    store: PersistenceStore,
+    file_record: dict,
+) -> None:
+    try:
+        parsed = parse_document_file(
+            Path(file_record["storage_path"]),
+            filename=file_record["filename"],
+            mime_type=file_record["mime_type"],
+            settings=SETTINGS,
+        )
+        document_id = f"doc_{uuid4().hex}"
+        chunks = chunks_to_records(parsed.chunks, file_id=file_record["id"])[
+            : SETTINGS.max_chunks_per_file
+        ]
+        await store.replace_document(
+            document_id=document_id,
+            file_id=file_record["id"],
+            title=parsed.title,
+            text_chars=len(parsed.text),
+            parser=parsed.parser,
+            chunks=chunks,
+        )
+    except Exception as exc:
+        await store.mark_file_parse_failed(file_record["id"], str(exc))

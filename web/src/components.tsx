@@ -4,10 +4,12 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  FileText,
   Loader2,
   Menu,
   MoreHorizontal,
   Pause,
+  Paperclip,
   Pencil,
   Plus,
   RotateCcw,
@@ -24,10 +26,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { serviceSummary } from "./api";
-import { sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
+import { isDocumentSource, sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
 import type {
   ChatMessage,
   Conversation,
+  FileRecord,
+  MessageAttachment,
   MessagePart,
   ModelProviderState,
   RunState,
@@ -457,21 +461,78 @@ export function MessageList({
 type ComposerProps = {
   composer: string;
   isRunning: boolean;
+  attachedFiles: FileRecord[];
+  fileError: string | null;
   setComposer: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onStop: () => void;
+  onUploadFile: (file: File) => void;
+  onRemoveFile: (fileId: string) => void;
 };
 
 export function Composer({
   composer,
   isRunning,
+  attachedFiles,
+  fileError,
   setComposer,
   onSubmit,
   onStop,
+  onUploadFile,
+  onRemoveFile,
 }: ComposerProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <form className="composer" onSubmit={onSubmit}>
+      {attachedFiles.length > 0 && (
+        <div className="composer-files" aria-label="Attached files">
+          {attachedFiles.map((file) => (
+            <span
+              key={file.id}
+              className={cx(
+                "composer-file",
+                file.parse_status === "failed" && "composer-file--failed",
+              )}
+              title={file.parse_error || file.filename}
+            >
+              <FileText size={13} strokeWidth={iconStroke} />
+              <span>{file.filename}</span>
+              {file.parse_status !== "parsed" && <em>{file.parse_status}</em>}
+              <button
+                type="button"
+                onClick={() => onRemoveFile(file.id)}
+                title={`Remove ${file.filename}`}
+                disabled={isRunning}
+              >
+                <X size={12} strokeWidth={iconStroke} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {fileError && <div className="composer-file-error">{fileError}</div>}
       <div className="composer__input-row">
+        <button
+          className="composer-tool-button"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          title="Attach file"
+          disabled={isRunning}
+        >
+          <Paperclip size={17} strokeWidth={iconStroke} />
+        </button>
+        <input
+          ref={fileInputRef}
+          className="composer-file-input"
+          type="file"
+          accept=".txt,.md,.markdown,.json,.csv,.html,.htm,.pdf,.docx"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) onUploadFile(file);
+          }}
+        />
         <textarea
           className="composer__textarea"
           value={composer}
@@ -560,7 +621,18 @@ function MessageBubble({
   const showFooter = message.status !== "streaming";
 
   if (message.role === "user") {
-    return <div className="message message--user">{message.content}</div>;
+    return (
+      <div className="message user-message">
+        {message.content && (
+          <div className="message--user">
+            <div className="message--user__text">{message.content}</div>
+          </div>
+        )}
+        {message.attachments?.length ? (
+          <MessageAttachments attachments={message.attachments} />
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -632,6 +704,61 @@ function MessageBubble({
   );
 }
 
+function MessageAttachments({
+  attachments,
+}: {
+  attachments: MessageAttachment[];
+}) {
+  return (
+    <div className="message-attachments" aria-label="Message attachments">
+      {attachments.map((attachment) => {
+        const meta = [
+          fileTypeLabel(attachment.mime_type),
+          formatFileSize(attachment.size_bytes),
+          attachment.parse_status !== "parsed" ? attachment.parse_status : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        return (
+          <span
+            key={attachment.id}
+            className={cx(
+              "message-attachment",
+              attachment.parse_status === "failed" && "message-attachment--failed",
+            )}
+            title={attachment.parse_error || attachment.filename}
+          >
+            <span className="message-attachment__icon" aria-hidden="true">
+              <FileText size={16} strokeWidth={iconStroke} />
+            </span>
+            <span className="message-attachment__body">
+              <strong>{attachment.filename}</strong>
+              <small>{meta}</small>
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function fileTypeLabel(mimeType: string): string {
+  if (mimeType.includes("pdf")) return "PDF";
+  if (mimeType.includes("wordprocessingml")) return "DOCX";
+  if (mimeType.includes("json")) return "JSON";
+  if (mimeType.includes("csv")) return "CSV";
+  if (mimeType.includes("html")) return "HTML";
+  if (mimeType.startsWith("text/")) return "Text";
+  return "File";
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 type MessagePartGroup =
   | { id: string; type: "single"; part: MessagePart }
   | { id: string; type: "tools"; parts: Extract<MessagePart, { type: "tool" }>[] };
@@ -675,7 +802,7 @@ function MessagePartView({
               if (source && isCitation) {
                 return (
                   <CitationMarker
-                    href={href || source.url || "#"}
+                    href={citationHref(source)}
                     source={source}
                   />
                 );
@@ -716,6 +843,7 @@ function ToolTrace({
 }) {
   const hasRunning = parts.some((part) => part.status === "running");
   const hasError = parts.some((part) => part.status === "error");
+  const summary = toolTraceSummary(parts);
   const detailsRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
@@ -731,14 +859,22 @@ function ToolTrace({
         "tool-trace",
         hasRunning && "tool-trace--running",
         hasError && "tool-trace--error",
+        `tool-trace--${summary.tone}`,
       )}
     >
       <summary className="tool-trace__header">
         <span className="tool-trace__chevron" aria-hidden="true">
           <ChevronRight size={13} strokeWidth={iconStroke} />
         </span>
-        <Wrench size={13} strokeWidth={iconStroke} />
-        <span>Tool activity</span>
+        <span className="tool-trace__status-icon" aria-hidden="true">
+          <Wrench size={13} strokeWidth={iconStroke} />
+        </span>
+        <span className="tool-trace__summary">{summary.label}</span>
+        {summary.count > 1 && (
+          <span className="tool-trace__count" aria-label={`${summary.count} tool steps`}>
+            {summary.count}
+          </span>
+        )}
       </summary>
       <ol className="tool-trace__list">
         {parts.map((part) => (
@@ -749,6 +885,143 @@ function ToolTrace({
   );
 }
 
+type ToolTraceSummary = {
+  label: string;
+  tone: "idle" | "running" | "complete" | "warning" | "error";
+  count: number;
+};
+
+function toolTraceSummary(
+  parts: Extract<MessagePart, { type: "tool" }>[],
+): ToolTraceSummary {
+  const count = parts.length;
+  if (!count) {
+    return { label: "Tool activity", tone: "idle", count: 0 };
+  }
+
+  const latestRunning = [...parts]
+    .reverse()
+    .find((part) => part.status === "running");
+  if (latestRunning) {
+    return {
+      label: `${activeToolLabel(latestRunning.label)}...`,
+      tone: "running",
+      count,
+    };
+  }
+
+  const hasError = parts.some((part) => part.status === "error");
+  if (hasError) {
+    return {
+      label: "Some checks could not be completed",
+      tone: "warning",
+      count,
+    };
+  }
+
+  const categories = new Set(parts.map((part) => toolCategory(part.label)));
+  const hasDocument = categories.has("document");
+  const hasWeb = categories.has("web") || categories.has("fetch");
+  const hasSourceReview = categories.has("review");
+
+  if (hasDocument && hasWeb) {
+    return { label: "Used document + web sources", tone: "complete", count };
+  }
+  if (hasDocument) {
+    return { label: "Used document sources", tone: "complete", count };
+  }
+  if (hasWeb) {
+    return { label: "Used web sources", tone: "complete", count };
+  }
+  if (hasSourceReview) {
+    return { label: "Reviewed sources", tone: "complete", count };
+  }
+  return { label: `Used ${count} tool${count === 1 ? "" : "s"}`, tone: "complete", count };
+}
+
+function activeToolLabel(toolName: string): string {
+  const normalized = toolName.toLowerCase();
+  if (normalized.includes("service checking")) return "Checking service";
+  if (normalized.includes("service waking")) return "Waking service";
+
+  switch (normalized) {
+    case "list_files":
+      return "Reading attachments";
+    case "read_file":
+      return "Reading attached file";
+    case "search_document":
+      return "Searching document";
+    case "quote_document":
+      return "Checking document evidence";
+    case "summarize_document":
+      return "Summarizing document";
+    case "compare_documents":
+      return "Comparing documents";
+    case "search_web":
+    case "search_multi_query":
+      return "Searching the web";
+    case "fetch_url":
+      return "Opening source";
+    case "fetch_many":
+      return "Fetching sources";
+    case "rank_sources":
+      return "Reviewing sources";
+    case "extract_source_facts":
+      return "Extracting facts";
+    case "build_citations":
+      return "Building citations";
+    case "get_datetime":
+      return "Checking the date";
+    case "calculate":
+      return "Calculating";
+    default:
+      return humanizeToolName(toolName);
+  }
+}
+
+function toolCategory(toolName: string): "document" | "web" | "fetch" | "review" | "utility" | "service" | "other" {
+  const normalized = toolName.toLowerCase();
+  if (
+    normalized.includes("document") ||
+    normalized === "list_files" ||
+    normalized === "read_file" ||
+    normalized === "quote_document" ||
+    normalized === "summarize_document" ||
+    normalized === "compare_documents"
+  ) {
+    return "document";
+  }
+  if (normalized === "search_web" || normalized === "search_multi_query") {
+    return "web";
+  }
+  if (normalized === "fetch_url" || normalized === "fetch_many") {
+    return "fetch";
+  }
+  if (
+    normalized === "rank_sources" ||
+    normalized === "extract_source_facts" ||
+    normalized === "build_citations"
+  ) {
+    return "review";
+  }
+  if (normalized === "get_datetime" || normalized === "calculate") {
+    return "utility";
+  }
+  if (normalized.includes("service ")) {
+    return "service";
+  }
+  return "other";
+}
+
+function humanizeToolName(toolName: string): string {
+  const words = toolName
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!words) return "Using tool";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function CitationMarker({
   href,
   source,
@@ -756,24 +1029,32 @@ function CitationMarker({
   href: string;
   source: SourcePreview;
 }) {
-  const label = source.citationIndex ? String(source.citationIndex) : "";
+  const label = source.citationIndex
+    ? isDocumentSource(source)
+      ? `file:${source.citationIndex}`
+      : String(source.citationIndex)
+    : "";
+  const title = source.title || source.domain || "Source";
+  const isDocument = isDocumentSource(source);
 
   return (
     <span className="inline-citation">
       <a
-        className="citation-link"
+        className={cx("citation-link", isDocument && "citation-link--document")}
         href={href}
-        target="_blank"
+        target={isDocument ? undefined : "_blank"}
         rel="noreferrer"
-        aria-label={`Open source ${label}: ${source.title || source.domain || "Source"}`}
+        aria-label={`Open source ${label}: ${title}`}
       >
         {label}
       </a>
       <span className="citation-popover" role="tooltip">
-        <a href={href} target="_blank" rel="noreferrer">
+        <a href={href} target={isDocument ? undefined : "_blank"} rel="noreferrer">
           <span>{label}</span>
-          <strong>{source.title || source.domain || "Source"}</strong>
-          {source.domain && <em>{source.domain}</em>}
+          <strong>{title}</strong>
+          {(source.locator || source.domain) && (
+            <em>{source.locator || source.domain}</em>
+          )}
           {source.snippet && <small>{source.snippet}</small>}
         </a>
       </span>
@@ -782,28 +1063,40 @@ function CitationMarker({
 }
 
 function MessageSources({ sources }: { sources: SourcePreview[] }) {
-  const usableSources = sources.filter((source) => source.url);
+  const usableSources = sources.filter(
+    (source) => source.url || isDocumentSource(source),
+  );
   if (!usableSources.length) return null;
+  const sourceLabel = usableSources.every(isDocumentSource)
+    ? "Document sources"
+    : "Sources";
 
   return (
     <details className="message-sources">
       <summary className="message-sources__header">
-        <span>Sources</span>
+        <span>{sourceLabel}</span>
         <strong>{usableSources.length}</strong>
       </summary>
       <ol className="source-list">
         {usableSources.map((source) => (
-          <li key={source.id || source.url}>
-            <a href={source.url || "#"} target="_blank" rel="noreferrer">
+          <li key={source.id || source.url} id={sourceAnchorId(source)}>
+            <a
+              className={cx(isDocumentSource(source) && "source-list__item--document")}
+              href={source.url || `#${sourceAnchorId(source)}`}
+              target={source.url ? "_blank" : undefined}
+              rel="noreferrer"
+            >
               <span className="source-list__index">
-                {source.citationIndex ?? ""}
+                {isDocumentSource(source)
+                  ? `file:${source.citationIndex ?? ""}`
+                  : source.citationIndex ?? ""}
               </span>
               <span className="source-list__body">
                 <strong>{source.title || source.domain || source.url}</strong>
-                <span>{source.domain || source.url}</span>
+                <span>{source.locator || source.domain || source.url}</span>
                 {source.snippet && <em>{source.snippet}</em>}
               </span>
-              <ExternalLink size={13} strokeWidth={iconStroke} />
+              {source.url ? <ExternalLink size={13} strokeWidth={iconStroke} /> : null}
             </a>
           </li>
         ))}
@@ -834,7 +1127,7 @@ function MessageFooter({
       {sources.length > 0 && <MessageSources sources={sources} />}
       <div className="message-actions-row">
         <MessageActions
-          hasSources={sources.some((source) => source.url)}
+          hasSources={sources.length > 0}
           onCopy={onCopy}
           onCopyWithSources={onCopyWithSources}
           onCopySources={onCopySources}
@@ -1170,13 +1463,21 @@ function stripDuplicateCitationList(text: string): string {
 }
 
 function linkCitationMarkers(text: string, sources: SourcePreview[]): string {
-  return text.replace(/\[(\d{1,2})\](?!\()/g, (match, rawIndex: string) => {
-    const source = sources.find(
-      (item) => item.citationIndex === Number(rawIndex) && item.url,
-    );
-    if (!source?.url) return match;
-    return `[${rawIndex}](${source.url})`;
-  });
+  return text
+    .replace(/\[file:(\d{1,2})\](?!\()/gi, (match, rawIndex: string) => {
+      const source = sources.find(
+        (item) => item.citationIndex === Number(rawIndex) && isDocumentSource(item),
+      );
+      if (!source) return match;
+      return `[file:${rawIndex}](${citationHref(source)})`;
+    })
+    .replace(/\[(\d{1,2})\](?!\()/g, (match, rawIndex: string) => {
+      const source = sources.find(
+        (item) => item.citationIndex === Number(rawIndex) && item.url,
+      );
+      if (!source?.url) return match;
+      return `[${rawIndex}](${source.url})`;
+    });
 }
 
 function sourceForHref(
@@ -1184,12 +1485,15 @@ function sourceForHref(
   sources: SourcePreview[],
 ): SourcePreview | undefined {
   if (!href) return undefined;
+  if (href.startsWith("#source-")) {
+    return sources.find((source) => citationHref(source) === href);
+  }
   return sources.find((source) => source.url && sameSourceUrl(source.url, href));
 }
 
 function citationText(children: unknown): boolean {
   const text = childrenText(children).trim();
-  return /^\[?\d{1,2}\]?$/.test(text);
+  return /^\[?(?:file:)?\d{1,2}\]?$/.test(text);
 }
 
 function childrenText(children: unknown): string {
@@ -1205,11 +1509,27 @@ function childrenText(children: unknown): string {
 function sourceTitle(source: SourcePreview): string {
   return [
     source.title || source.domain || "Source",
-    source.domain,
+    source.locator || source.domain,
     source.snippet,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function citationHref(source: SourcePreview): string {
+  if (source.url) return source.url;
+  return `#${sourceAnchorId(source)}`;
+}
+
+function sourceAnchorId(source: SourcePreview): string {
+  const key =
+    source.chunk_id ||
+    source.chunkId ||
+    source.id ||
+    source.file_id ||
+    source.fileId ||
+    String(source.citationIndex || "source");
+  return `source-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function providerLabel(provider: ModelProviderState): string {

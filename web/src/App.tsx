@@ -9,11 +9,13 @@ import {
 
 import {
   connectChat,
+  deleteFile as deleteUploadedFile,
   deleteConversation as deleteServerConversation,
   fetchConversationMessages,
   fetchConversations,
   fetchServices,
   renameConversation as renameServerConversation,
+  uploadFile,
 } from "./api";
 import {
   AppHeader,
@@ -37,6 +39,8 @@ import type {
   ChatHistoryMessage,
   ChatMessage,
   Conversation,
+  FileRecord,
+  MessageAttachment,
   MessagePart,
   ModelProviderState,
   RunState,
@@ -66,6 +70,8 @@ function App() {
     useState<ModelProviderState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<FileRecord[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
@@ -220,6 +226,8 @@ function App() {
     setConversations((current) => [conversation, ...current]);
     setActiveId(conversation.id);
     setComposer("");
+    setAttachedFiles([]);
+    setFileError(null);
     setRunState("idle");
     setSidebarOpen(false);
   }
@@ -233,6 +241,8 @@ function App() {
     autoScrollRef.current = true;
     setShowJumpToLatest(false);
     setActiveId(conversationId);
+    setAttachedFiles([]);
+    setFileError(null);
     setRunState("idle");
     setSidebarOpen(false);
   }
@@ -304,6 +314,8 @@ function App() {
 
     stopStream("stopped");
     const history = buildChatHistory(activeConversation.messages);
+    const submittedAttachments = attachedFiles.map(messageAttachmentFromFile);
+    const fileIds = parsedMessageAttachmentIds(submittedAttachments);
 
     const now = new Date().toISOString();
     const assistantMessageId = crypto.randomUUID();
@@ -313,6 +325,7 @@ function App() {
       content: prompt,
       createdAt: now,
       status: "complete",
+      attachments: submittedAttachments,
     };
     const assistantMessage: ChatMessage = {
       id: assistantMessageId,
@@ -324,6 +337,8 @@ function App() {
     };
 
     setComposer("");
+    setAttachedFiles([]);
+    setFileError(null);
     autoScrollRef.current = true;
     setShowJumpToLatest(false);
 
@@ -341,6 +356,7 @@ function App() {
       assistantMessageId,
       prompt,
       history,
+      fileIds,
     );
   }
 
@@ -387,11 +403,13 @@ function App() {
       ],
     }));
 
+    const fileIds = parsedMessageAttachmentIds(userMessage.attachments ?? []);
     startAssistantRun(
       activeConversation.id,
       assistantMessageId,
       prompt,
       history,
+      fileIds,
     );
   }
 
@@ -400,6 +418,7 @@ function App() {
     assistantId: string,
     prompt: string,
     history: ChatHistoryMessage[],
+    fileIds: string[],
   ) {
     activeAssistantIdRef.current = assistantId;
     setRunState("connecting");
@@ -410,6 +429,10 @@ function App() {
         message: prompt,
         conversation_id: conversationId,
         history,
+        options: {
+          max_search_results: 5,
+          file_ids: fileIds,
+        },
       },
       (serverEvent) =>
         handleServerEvent(
@@ -854,7 +877,7 @@ function App() {
     const sourceText = sources
       .map(
         (source) =>
-          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${source.url}`,
+          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${sourceReference(source)}`,
       )
       .join("\n\n");
     const combined = [text, sourceText ? `Sources\n${sourceText}` : ""]
@@ -870,11 +893,31 @@ function App() {
     const text = sources
       .map(
         (source) =>
-          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${source.url}`,
+          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${sourceReference(source)}`,
       )
       .join("\n\n");
     if (text) {
       await navigator.clipboard.writeText(text);
+    }
+  }
+
+  async function handleUploadFile(file: File) {
+    if (!activeId) return;
+    try {
+      setFileError(null);
+      const response = await uploadFile(file, activeId);
+      setAttachedFiles((current) => mergeFiles(current, [response.file]));
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "File upload failed.");
+    }
+  }
+
+  async function handleRemoveFile(fileId: string) {
+    setAttachedFiles((current) => current.filter((file) => file.id !== fileId));
+    try {
+      await deleteUploadedFile(fileId);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "File delete failed.");
     }
   }
 
@@ -934,6 +977,10 @@ function App() {
           setComposer={setComposer}
           onSubmit={submitMessage}
           onStop={() => stopStream("stopped")}
+          attachedFiles={attachedFiles}
+          fileError={fileError}
+          onUploadFile={(file) => void handleUploadFile(file)}
+          onRemoveFile={(fileId) => void handleRemoveFile(fileId)}
         />
       </section>
     </main>
@@ -956,6 +1003,44 @@ function findLastToolIndex(
     }
   }
   return -1;
+}
+
+function parsedMessageAttachmentIds(attachments: MessageAttachment[]): string[] {
+  return attachments
+    .filter((attachment) => attachment.parse_status === "parsed")
+    .map((attachment) => attachment.id);
+}
+
+function messageAttachmentFromFile(file: FileRecord): MessageAttachment {
+  return {
+    id: file.id,
+    filename: file.filename,
+    mime_type: file.mime_type,
+    size_bytes: file.size_bytes,
+    parse_status: file.parse_status,
+    parse_error: file.parse_error,
+  };
+}
+
+function mergeFiles(current: FileRecord[], incoming: FileRecord[]): FileRecord[] {
+  const byId = new Map(current.map((file) => [file.id, file]));
+  for (const file of incoming) {
+    byId.set(file.id, file);
+  }
+  return Array.from(byId.values());
+}
+
+function sourceReference(source: SourcePreview): string {
+  return (
+    source.url ||
+    source.locator ||
+    source.domain ||
+    source.file_id ||
+    source.fileId ||
+    source.chunk_id ||
+    source.chunkId ||
+    ""
+  );
 }
 
 function findPreviousUserIndex(messages: ChatMessage[], beforeIndex: number) {
@@ -995,19 +1080,38 @@ function conversationFromServer(
 }
 
 function messageFromServer(message: StoredMessage): ChatMessage {
+  const content = message.content || "";
+  const status = normalizeMessageStatus(message.status);
+  const metrics =
+    message.role === "assistant" && content
+      ? finalizeMessageMetrics(
+          {
+            id: message.id,
+            role: message.role,
+            content,
+            createdAt: message.created_at,
+            metrics: { startedAt: message.created_at },
+          },
+          content,
+          message.completed_at || message.created_at,
+        )
+      : undefined;
+
   return {
     id: message.id,
     role: message.role,
-    content: message.content || "",
+    content,
     createdAt: message.created_at,
-    status: normalizeMessageStatus(message.status),
+    status,
+    attachments: message.attachments ?? [],
+    metrics,
     parts:
-      message.role === "assistant" && message.content
+      message.role === "assistant" && content
         ? [
             {
               id: `text-${message.id}`,
               type: "text",
-              text: message.content,
+              text: content,
               status: message.status === "streaming" ? "streaming" : "complete",
             },
           ]

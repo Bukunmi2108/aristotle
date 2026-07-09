@@ -25,6 +25,7 @@ from app.agent.model_trace import (
     start_model_trace,
 )
 from app.config import ApiSettings
+from app.db import PersistenceStore
 from app.events import EventSender
 from app.models import ClientUserMessage, SearchResponse
 from app.services.search import SearchClient
@@ -34,9 +35,15 @@ MAX_HISTORY_CHARS = 24_000
 
 
 class AristotleAgentRuntime:
-    def __init__(self, search_client: SearchClient, settings: ApiSettings):
+    def __init__(
+        self,
+        search_client: SearchClient,
+        settings: ApiSettings,
+        document_store: PersistenceStore | None = None,
+    ):
         self.search_client = search_client
         self.settings = settings
+        self.document_store = document_store
 
     async def stream_response(
         self, user_message: ClientUserMessage, events: EventSender
@@ -45,13 +52,21 @@ class AristotleAgentRuntime:
         try:
             agent = build_agent(self.settings)
             options = user_message.options
+            if options.file_ids and self.document_store is None:
+                raise RuntimeError("Document persistence is not configured.")
+            prompt = await self._message_with_file_context(
+                user_message.message,
+                options.file_ids,
+            )
             deps = AgentDeps(
                 search_client=self.search_client,
                 http_client=self.search_client.http,
                 events=events,
                 settings=self.settings,
                 max_search_results=options.max_search_results,
-                web_tools_enabled=options.use_search,
+                web_tools_enabled=True,
+                document_store=self.document_store,
+                file_ids=options.file_ids,
             )
             final_parts: list[str] = []
             model_started = perf_counter()
@@ -61,8 +76,9 @@ class AristotleAgentRuntime:
             await events.send(
                 "agent.started",
                 input={
-                    "web_tools_enabled": options.use_search,
+                    "web_tools_enabled": True,
                     "max_search_results": options.max_search_results,
+                    "file_ids": options.file_ids,
                     "primary_model": trace.primary.model,
                     "fallback_model": trace.fallback.model if trace.fallback else None,
                     "history_messages": len(user_message.history),
@@ -73,7 +89,7 @@ class AristotleAgentRuntime:
             )
 
             async with agent.run_stream_events(
-                user_message.message,
+                prompt,
                 message_history=_message_history(user_message),
                 deps=deps,
                 model_settings={"temperature": self.settings.agent_temperature},
@@ -108,6 +124,44 @@ class AristotleAgentRuntime:
         finally:
             reset_model_trace(trace_token)
 
+    async def _message_with_file_context(
+        self,
+        message: str,
+        file_ids: list[str],
+    ) -> str:
+        if not file_ids:
+            return message
+        if self.document_store is None:
+            return message
+
+        files: list[dict[str, Any]] = []
+        for file_id in file_ids:
+            record = await self.document_store.get_file(file_id)
+            if record is not None:
+                files.append(record)
+
+        if not files:
+            return message
+
+        file_lines = "\n".join(
+            f"- {file['filename']} (file_id: {file['id']})" for file in files
+        )
+        return (
+            "Attached files for this user message:\n"
+            f"{file_lines}\n\n"
+            "This user message includes uploaded files. Inspect the attached files "
+            "with DocumentTools before asking for clarification about vague "
+            "references such as 'this', 'it', 'the file', or 'is this true'. "
+            "Use list_files first if needed, then search_document or read_file for "
+            "evidence. Do not answer from the filename alone. For truth or accuracy "
+            "questions, first identify what the document itself says and whether its "
+            "internal claims are supported by the document. If the claim depends on "
+            "current prices, dates, public facts, or real-world availability, verify "
+            "that externally with web search after inspecting the file. Keep document "
+            "evidence distinct from externally verified evidence.\n\n"
+            f"User message:\n{message}"
+        )
+
     async def _handle_event(self, event: Any, events: EventSender) -> str:
         if isinstance(event, FunctionToolResultEvent):
             await events.send(
@@ -141,7 +195,7 @@ def _result_count(content: Any) -> int | None:
         return len(content.results)
     data = _as_dict(content)
     if data:
-        for key in ("results", "sources", "citations", "facts", "failures"):
+        for key in ("results", "chunks", "sources", "citations", "facts", "failures"):
             values = data.get(key)
             if isinstance(values, list):
                 return len(values)
@@ -229,6 +283,7 @@ def _result_preview(content: Any) -> list[dict[str, Any]] | None:
     preview: list[dict[str, Any]] = []
     for key, status in (
         ("results", "searched"),
+        ("chunks", "fetched"),
         ("sources", "ranked"),
         ("citations", "cited"),
         ("facts", "cited"),
@@ -267,6 +322,32 @@ def _as_dict(content: Any) -> dict[str, Any] | None:
 
 
 def _source_preview(item: dict[str, Any], *, status: str) -> dict[str, Any]:
+    source_type = item.get("source_type")
+    file_id = item.get("file_id")
+    chunk_id = item.get("chunk_id") or item.get("id")
+    if source_type == "document" or file_id or item.get("locator"):
+        title = item.get("title") or item.get("filename")
+        snippet = item.get("snippet") or item.get("text_preview") or item.get("quote")
+        return {
+            "id": chunk_id if isinstance(chunk_id, str) else item.get("id"),
+            "title": title if isinstance(title, str) else "Document",
+            "url": None,
+            "domain": None,
+            "source": "document",
+            "source_type": "document",
+            "file_id": file_id if isinstance(file_id, str) else None,
+            "chunk_id": chunk_id if isinstance(chunk_id, str) else None,
+            "locator": item.get("locator")
+            if isinstance(item.get("locator"), str)
+            else None,
+            "page": item.get("page"),
+            "section": item.get("section"),
+            "row_start": item.get("row_start"),
+            "row_end": item.get("row_end"),
+            "snippet": _preview_text(snippet),
+            "status": status,
+        }
+
     url = item.get("url")
     if not isinstance(url, str) or not url:
         return {}
@@ -292,10 +373,18 @@ def _dedupe_source_previews(
     deduped: dict[str, dict[str, Any]] = {}
     for preview in previews:
         url = preview.get("url")
-        if not isinstance(url, str) or not url:
+        fallback_id = preview.get("chunk_id") or preview.get("id")
+        if isinstance(url, str) and url:
+            key = url
+        elif isinstance(fallback_id, str) and fallback_id:
+            key = fallback_id
+        else:
             continue
-        current = deduped.get(url, {})
-        deduped[url] = {**preview, **{key: value for key, value in current.items() if value}}
+        current = deduped.get(key, {})
+        deduped[key] = {
+            **preview,
+            **{key: value for key, value in current.items() if value},
+        }
     return list(deduped.values())
 
 

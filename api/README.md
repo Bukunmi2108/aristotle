@@ -60,9 +60,8 @@ client WebSocket
   -> streamed websocket events
 ```
 
-`options.use_search=false` builds the agent without search tools.
-`options.use_search=true` gives the model a `search_web` tool and lets the model
-decide when to call it during the response.
+Web search tools are available automatically. The model decides when to call
+them during the response.
 
 The primary provider is ModelScope API Inference using `zai-org/GLM-5.2`. The
 fallback is the existing llama.cpp OpenAI-compatible Space. Both are wrapped
@@ -180,7 +179,6 @@ FALLBACK_MODEL_API_KEY=unused
   "type": "user.message",
   "message": "Use search if needed, then answer clearly.",
   "options": {
-    "use_search": true,
     "max_search_results": 5
   }
 }

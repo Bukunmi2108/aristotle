@@ -13,7 +13,6 @@ async def collect_chat_events(
     ws_url: str,
     prompt: str,
     *,
-    use_search: bool = True,
     max_search_results: int = 5,
     timeout_seconds: float = 180,
 ) -> list[dict[str, Any]]:
@@ -27,7 +26,6 @@ async def collect_chat_events(
                     "type": "user.message",
                     "message": prompt,
                     "options": {
-                        "use_search": use_search,
                         "max_search_results": max_search_results,
                     },
                 }
