@@ -1,0 +1,42 @@
+{
+  "id": "simple_current_fact",
+  "category": "current_fact",
+  "prompt": "What is NASA's current planned launch date for Artemis II?",
+  "expectations": {
+    "search": "required",
+    "required_tools": ["search_web"],
+    "min_queries": 1,
+    "min_sources": 1,
+    "min_citations": 1,
+    "required_source_domains": ["nasa.gov"],
+    "require_freshness": true
+  },
+  "events": [
+    {
+      "type": "tool.started",
+      "tool": "search_web",
+      "input": {
+        "query": "NASA Artemis II launch date",
+        "freshness": "month",
+        "max_results": 5
+      }
+    },
+    {
+      "type": "tool.result",
+      "tool": "search_web",
+      "result_preview": [
+        {
+          "title": "NASA Artemis II",
+          "url": "https://www.nasa.gov/mission/artemis-ii/",
+          "domain": "nasa.gov",
+          "snippet": "NASA provides the current Artemis II mission schedule.",
+          "status": "searched"
+        }
+      ]
+    },
+    {
+      "type": "message.completed",
+      "message": "NASA's current public Artemis II schedule should be checked against NASA because launch planning can change. NASA's Artemis II mission page is the source for the current schedule [1]."
+    }
+  ]
+}

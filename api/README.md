@@ -139,6 +139,28 @@ curl http://localhost:8400/healthz
 curl http://localhost:8400/services
 ```
 
+## Research Evals
+
+Offline research fixtures live in `tests/evals/research`. They validate event
+traces for protocol and integrity checks: tool usage, tool inputs, source
+domains, source counts, failed source previews, citation marker resolution,
+hallucinated raw URLs, duplicate raw citation sections, and event-derived
+runtime metrics.
+
+```sh
+uv run python -m app.evals.research tests/evals/research
+```
+
+To run the same fixture expectations against a live API WebSocket, start the API
+separately and run:
+
+```sh
+uv run python -m app.evals.live_research \
+  --ws-url ws://localhost:8400/ws/chat \
+  --fixtures tests/evals/research \
+  --runs 3
+```
+
 ## Model Provider Environment
 
 ```sh

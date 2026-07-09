@@ -1,0 +1,16 @@
+{
+  "id": "stable_concept_no_search",
+  "category": "stable_concept",
+  "prompt": "Explain why identical twins often look alike.",
+  "expectations": {
+    "search": "forbidden",
+    "min_sources": 0,
+    "min_citations": 0
+  },
+  "events": [
+    {
+      "type": "message.completed",
+      "message": "Identical twins often look alike because they come from one fertilized egg that split into two embryos, so they share nearly the same DNA. Environment and development can still create small differences."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "official_docs_question",
+  "category": "technical_docs",
+  "prompt": "Using official Python docs only, explain pathlib.Path.read_text.",
+  "expectations": {
+    "search": "required",
+    "required_tools": ["search_web"],
+    "min_queries": 1,
+    "min_sources": 1,
+    "min_citations": 1,
+    "required_input_domains": ["docs.python.org"],
+    "required_source_domains": ["docs.python.org"],
+    "forbidden_source_domains": ["realpython.com", "stackoverflow.com"]
+  },
+  "events": [
+    {
+      "type": "tool.started",
+      "tool": "search_web",
+      "input": {
+        "query": "site:docs.python.org pathlib Path read_text",
+        "domains": ["docs.python.org"],
+        "max_results": 5
+      }
+    },
+    {
+      "type": "tool.result",
+      "tool": "search_web",
+      "result_preview": [
+        {
+          "title": "pathlib - Object-oriented filesystem paths",
+          "url": "https://docs.python.org/3/library/pathlib.html",
+          "domain": "docs.python.org",
+          "snippet": "Path.read_text reads the file as text and returns the contents as a string.",
+          "status": "searched"
+        }
+      ]
+    },
+    {
+      "type": "message.completed",
+      "message": "In the official Python documentation, Path.read_text opens a path in text mode, reads the contents, and returns them as a string [1]."
+    }
+  ]
+}
