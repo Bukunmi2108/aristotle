@@ -69,70 +69,94 @@ class LocalWebTools(AbstractCapability[AgentDeps]):
             domains: list[str] | None = None,
         ) -> SearchResponse:
             """Search the web for current facts, sources, and references."""
-            max_allowed = min(self.max_search_results, ctx.deps.max_search_results)
-            request = SearchToolRequest(
+            return await self.search_web_impl(
+                ctx,
                 query=query,
-                max_results=max(1, min(max_results, max_allowed)),
+                max_results=max_results,
                 freshness=freshness,
-                domains=domains or [],
+                domains=domains,
+                tool_name="search_web",
             )
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="search_web",
-                input=request.model_dump(exclude_none=True),
-            )
-            try:
-                await wait_for_service_ready(
-                    service="search",
-                    is_ready=ctx.deps.search_client.is_ready,
-                    settings=ctx.deps.settings,
-                    events=ctx.deps.events,
-                )
-                return await ctx.deps.search_client.search(request)
-            except Exception as exc:
-                await ctx.deps.events.send(
-                    "tool.error", tool="search_web", message=str(exc)
-                )
-                raise
 
         @toolset.tool(
             name="fetch_url", strict=False, timeout=self.fetch_timeout_seconds
         )
         async def fetch_url(ctx: RunContext[AgentDeps], url: str) -> FetchUrlResult:
             """Fetch a public HTTP(S) URL and return readable page text."""
-            await ctx.deps.events.send(
-                "tool.started", tool="fetch_url", input={"url": url}
-            )
-            try:
-                _validate_public_http_url(url)
-                raw, final_url, content_type, truncated = await _read_limited(
-                    ctx,
-                    url,
-                    max_bytes=self.max_fetch_bytes,
-                )
-                _validate_public_http_url(final_url)
-                title, content = _extract_content(raw, content_type)
-                content = content[: self.max_fetch_chars]
-                return FetchUrlResult(
-                    url=final_url,
-                    title=title,
-                    content=content,
-                    content_chars=len(content),
-                    truncated=truncated or len(content) >= self.max_fetch_chars,
-                    content_type=content_type,
-                )
-            except Exception as exc:
-                message = f"Fetch failed for {url}: {exc}"
-                return FetchUrlResult(
-                    url=url,
-                    title=None,
-                    content=message,
-                    content_chars=len(message),
-                    truncated=False,
-                    content_type=None,
-                )
+            return await self.fetch_url_impl(ctx, url=url, tool_name="fetch_url")
 
         return toolset
+
+    async def search_web_impl(
+        self,
+        ctx: RunContext[AgentDeps],
+        *,
+        query: str,
+        max_results: int = 5,
+        freshness: Freshness | None = None,
+        domains: list[str] | None = None,
+        tool_name: str = "search_web",
+    ) -> SearchResponse:
+        max_allowed = min(self.max_search_results, ctx.deps.max_search_results)
+        request = SearchToolRequest(
+            query=query,
+            max_results=max(1, min(max_results, max_allowed)),
+            freshness=freshness,
+            domains=domains or [],
+        )
+        await ctx.deps.events.send(
+            "tool.started",
+            tool=tool_name,
+            input=request.model_dump(exclude_none=True),
+        )
+        try:
+            await wait_for_service_ready(
+                service="search",
+                is_ready=ctx.deps.search_client.is_ready,
+                settings=ctx.deps.settings,
+                events=ctx.deps.events,
+            )
+            return await ctx.deps.search_client.search(request)
+        except Exception as exc:
+            await ctx.deps.events.send("tool.error", tool=tool_name, message=str(exc))
+            raise
+
+    async def fetch_url_impl(
+        self,
+        ctx: RunContext[AgentDeps],
+        *,
+        url: str,
+        tool_name: str = "fetch_url",
+    ) -> FetchUrlResult:
+        await ctx.deps.events.send("tool.started", tool=tool_name, input={"url": url})
+        try:
+            _validate_public_http_url(url)
+            raw, final_url, content_type, truncated = await _read_limited(
+                ctx,
+                url,
+                max_bytes=self.max_fetch_bytes,
+            )
+            _validate_public_http_url(final_url)
+            title, content = _extract_content(raw, content_type)
+            content = content[: self.max_fetch_chars]
+            return FetchUrlResult(
+                url=final_url,
+                title=title,
+                content=content,
+                content_chars=len(content),
+                truncated=truncated or len(content) >= self.max_fetch_chars,
+                content_type=content_type,
+            )
+        except Exception as exc:
+            message = f"Fetch failed for {url}: {exc}"
+            return FetchUrlResult(
+                url=url,
+                title=None,
+                content=message,
+                content_chars=len(message),
+                truncated=False,
+                content_type=None,
+            )
 
     async def prepare_tools(
         self,
@@ -194,7 +218,7 @@ async def _read_limited(
         "GET",
         url,
         timeout=ctx.deps.settings.web_fetch_timeout_seconds,
-        headers={"User-Agent": "AristotleBot/0.1"},
+        headers={"User-Agent": "Aristotle/0.1"},
         follow_redirects=False,
     ) as response:
         response.raise_for_status()

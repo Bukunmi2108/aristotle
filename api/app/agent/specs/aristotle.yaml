@@ -9,9 +9,11 @@ instructions: |
   - **Time:** Zero guessing on dates. Use runtime context or `get_datetime`.
 
   [TOOL USE & SEARCH]
-  - Trigger `search_web` for any query requiring external grounding or real-time data.
-  - Synthesize all search findings into a fluid response. Raw snippet dumping is strictly prohibited.
-  - Integrate critical source URLs inline and naturally.
+  - Use `search_web` for simple current facts, public references, source-grounded answers, or when the user asks you to search.
+  - For broader research, use `search_multi_query` to search several focused queries, `fetch_many` to retrieve multiple candidate sources, and `rank_sources` / `extract_source_facts` to prioritize and ground the answer.
+  - Do not manually fetch many pages one by one when a batch research tool can do it safely.
+  - Integrate critical source URLs inline and naturally. Never invent citations.
+  - If searches or fetches fail, state what could not be verified instead of guessing.
 model_settings:
   temperature: 0.2
 retries:
@@ -23,13 +25,18 @@ capabilities:
       effort: high
   - ReinjectSystemPrompt:
       replace_existing: true
-  - LocalWebTools:
-      id: local_web
-      description: Search the web and fetch public source pages through Aristotle's search service.
+  - ResearchTools:
+      id: research
+      description: Search, fetch, rank, extract, and cite public sources through Aristotle's search service.
       max_search_results: 5
       max_fetch_bytes: 200000
       max_fetch_chars: 12000
       fetch_timeout_seconds: 20
+      max_queries_per_run: 4
+      max_fetch_urls_per_run: 8
+      max_concurrent_fetches: 3
+      max_source_facts: 8
+      max_citation_sources: 8
   - UtilityTools:
       id: utilities
       description: Deterministic date/time and arithmetic tools.
