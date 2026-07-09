@@ -21,6 +21,11 @@ import {
   saveConversations,
   titleFromPrompt,
 } from "./storage";
+import {
+  mergeSources,
+  normalizeSourcePreview,
+  sourcesFromMessage,
+} from "./sourceUtils";
 import type {
   ChatHistoryMessage,
   ChatMessage,
@@ -29,6 +34,7 @@ import type {
   ModelProviderState,
   RunState,
   ServerEvent,
+  SourcePreview,
   ServicesResponse,
   StoredConversation,
   StoredMessage,
@@ -218,6 +224,7 @@ function App() {
     const history = buildChatHistory(activeConversation.messages);
 
     const now = new Date().toISOString();
+    const assistantMessageId = crypto.randomUUID();
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -226,16 +233,15 @@ function App() {
       status: "complete",
     };
     const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: assistantMessageId,
       role: "assistant",
       createdAt: now,
       status: "streaming",
       parts: [],
+      metrics: { startedAt: now },
     };
 
-    activeAssistantIdRef.current = assistantMessage.id;
     setComposer("");
-    setRunState("connecting");
 
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -246,24 +252,92 @@ function App() {
       messages: [...conversation.messages, userMessage, assistantMessage],
     }));
 
+    startAssistantRun(
+      activeConversation.id,
+      assistantMessageId,
+      prompt,
+      history,
+    );
+  }
+
+  function retryMessage(message: ChatMessage) {
+    if (!activeConversation || isRunning) return;
+
+    const assistantIndex = activeConversation.messages.findIndex(
+      (item) => item.id === message.id && item.role === "assistant",
+    );
+    if (assistantIndex < 0) return;
+
+    const userIndex = findPreviousUserIndex(
+      activeConversation.messages,
+      assistantIndex,
+    );
+    if (userIndex < 0) return;
+
+    const userMessage = activeConversation.messages[userIndex];
+    const prompt = (userMessage.content || "").trim();
+    if (!prompt) return;
+
+    stopStream("stopped");
+
+    const now = new Date().toISOString();
+    const assistantMessageId = crypto.randomUUID();
+    const history = buildChatHistory(
+      activeConversation.messages.slice(0, userIndex),
+    );
+    const assistantMessage: ChatMessage = {
+      id: assistantMessageId,
+      role: "assistant",
+      createdAt: now,
+      status: "streaming",
+      parts: [],
+      metrics: { startedAt: now },
+    };
+
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      updatedAt: now,
+      messages: [
+        ...conversation.messages.slice(0, userIndex + 1),
+        assistantMessage,
+      ],
+    }));
+
+    startAssistantRun(
+      activeConversation.id,
+      assistantMessageId,
+      prompt,
+      history,
+    );
+  }
+
+  function startAssistantRun(
+    conversationId: string,
+    assistantId: string,
+    prompt: string,
+    history: ChatHistoryMessage[],
+  ) {
+    activeAssistantIdRef.current = assistantId;
+    setRunState("connecting");
+
     socketRef.current = connectChat(
       {
         type: "user.message",
         message: prompt,
-        conversation_id: activeConversation.id,
+        conversation_id: conversationId,
         history,
       },
       (serverEvent) =>
         handleServerEvent(
-          activeConversation.id,
-          assistantMessage.id,
+          conversationId,
+          assistantId,
           serverEvent,
         ),
       () => {
         socketRef.current = null;
       },
       (message) => {
-        appendWarning(activeConversation.id, assistantMessage.id, message);
+        appendWarning(conversationId, assistantId, message);
         setRunState("error");
       },
     );
@@ -339,6 +413,10 @@ function App() {
         firstTokenLatencyMs: event.latency_ms,
         source: "event",
       }));
+      updateAssistantMetrics(conversationId, assistantId, {
+        ttftMs: event.latency_ms,
+        firstTokenAt: event.timestamp,
+      });
       return;
     }
 
@@ -466,6 +544,33 @@ function App() {
       }
       return next;
     });
+
+    if (resultPreview?.length) {
+      mergeAssistantSources(conversationId, assistantId, resultPreview, toolName);
+    }
+  }
+
+  function mergeAssistantSources(
+    conversationId: string,
+    assistantId: string,
+    previews: ToolResultPreview[],
+    toolName?: string,
+  ) {
+    const incoming = previews
+      .map((preview) => normalizeSourcePreview(preview, toolName))
+      .filter((source): source is SourcePreview => Boolean(source));
+
+    if (!incoming.length) return;
+
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      updatedAt: new Date().toISOString(),
+      messages: conversation.messages.map((message) =>
+        message.id === assistantId
+          ? { ...message, sources: mergeSources(message.sources ?? [], incoming) }
+          : message,
+      ),
+    }));
   }
 
   function completeServiceStatus(
@@ -569,11 +674,10 @@ function App() {
     ]);
   }
 
-  function completeAssistant(
+  function updateAssistantMetrics(
     conversationId: string,
     assistantId: string,
-    content: string,
-    status: "complete" | "error" = "complete",
+    metrics: Partial<NonNullable<ChatMessage["metrics"]>>,
   ) {
     updateConversation(conversationId, (conversation) => ({
       ...conversation,
@@ -582,16 +686,43 @@ function App() {
         message.id === assistantId
           ? {
               ...message,
-              content,
-              status,
-              parts: (message.parts ?? []).map((part) =>
-                part.type === "text" || part.type === "reasoning"
-                  ? { ...part, status: "complete" }
-                  : part,
-              ),
+              metrics: {
+                ...message.metrics,
+                ...metrics,
+              },
             }
           : message,
       ),
+    }));
+  }
+
+  function completeAssistant(
+    conversationId: string,
+    assistantId: string,
+    content: string,
+    status: "complete" | "error" = "complete",
+  ) {
+    const completedAt = new Date().toISOString();
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      updatedAt: completedAt,
+      messages: conversation.messages.map((message) => {
+        if (message.id !== assistantId) {
+          return message;
+        }
+        const finalContent = content || textFromParts(message.parts ?? []);
+        return {
+          ...message,
+          content: finalContent,
+          status,
+          metrics: finalizeMessageMetrics(message, finalContent, completedAt),
+          parts: (message.parts ?? []).map((part) =>
+            part.type === "text" || part.type === "reasoning"
+              ? { ...part, status: "complete" }
+              : part,
+          ),
+        };
+      }),
     }));
   }
 
@@ -602,11 +733,22 @@ function App() {
 
     if (hadSocket && activeConversation && activeAssistantIdRef.current) {
       const assistantId = activeAssistantIdRef.current;
+      const completedAt = new Date().toISOString();
       updateConversation(activeConversation.id, (conversation) => ({
         ...conversation,
-        updatedAt: new Date().toISOString(),
+        updatedAt: completedAt,
         messages: conversation.messages.map((message) =>
-          message.id === assistantId ? { ...message, status } : message,
+          message.id === assistantId
+            ? {
+                ...message,
+                status,
+                metrics: finalizeMessageMetrics(
+                  message,
+                  message.content || textFromParts(message.parts ?? []),
+                  completedAt,
+                ),
+              }
+            : message,
         ),
       }));
     }
@@ -617,6 +759,36 @@ function App() {
 
   async function copyMessage(message: ChatMessage) {
     const text = message.content || textFromParts(message.parts ?? []);
+    if (text) {
+      await navigator.clipboard.writeText(text);
+    }
+  }
+
+  async function copyMessageWithSources(message: ChatMessage) {
+    const text = message.content || textFromParts(message.parts ?? []);
+    const sources = sourcesFromMessage(message);
+    const sourceText = sources
+      .map(
+        (source) =>
+          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${source.url}`,
+      )
+      .join("\n\n");
+    const combined = [text, sourceText ? `Sources\n${sourceText}` : ""]
+      .filter(Boolean)
+      .join("\n\n");
+    if (combined) {
+      await navigator.clipboard.writeText(combined);
+    }
+  }
+
+  async function copyMessageSources(message: ChatMessage) {
+    const sources = sourcesFromMessage(message);
+    const text = sources
+      .map(
+        (source) =>
+          `[${source.citationIndex ?? ""}] ${source.title || source.domain || "Source"}\n${source.url}`,
+      )
+      .join("\n\n");
     if (text) {
       await navigator.clipboard.writeText(text);
     }
@@ -659,6 +831,12 @@ function App() {
           detailsOpen={detailsOpen}
           setDetailsOpen={setDetailsOpen}
           onCopyMessage={(message) => void copyMessage(message)}
+          onCopyMessageWithSources={(message) =>
+            void copyMessageWithSources(message)
+          }
+          onCopyMessageSources={(message) => void copyMessageSources(message)}
+          onRetryMessage={retryMessage}
+          isRunning={isRunning}
           onPickPrompt={setComposer}
         />
 
@@ -686,6 +864,15 @@ function findLastToolIndex(
       (!toolName || part.label === toolName) &&
       (!status || part.status === status)
     ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findPreviousUserIndex(messages: ChatMessage[], beforeIndex: number) {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
       return index;
     }
   }
@@ -798,6 +985,45 @@ function textFromParts(parts: MessagePart[]): string {
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
     .trim();
+}
+
+function finalizeMessageMetrics(
+  message: ChatMessage,
+  content: string,
+  completedAt: string,
+): ChatMessage["metrics"] {
+  const current = message.metrics ?? {};
+  const startedMs = current.startedAt ? Date.parse(current.startedAt) : NaN;
+  const completedMs = Date.parse(completedAt);
+  const firstTokenMs = current.firstTokenAt ? Date.parse(current.firstTokenAt) : NaN;
+  const durationMs =
+    Number.isFinite(startedMs) && Number.isFinite(completedMs)
+      ? Math.max(0, completedMs - startedMs)
+      : current.durationMs;
+  const outputTokens = current.outputTokens ?? estimateTokenCount(content);
+  const generationMs =
+    Number.isFinite(firstTokenMs) && Number.isFinite(completedMs)
+      ? Math.max(1, completedMs - firstTokenMs)
+      : durationMs;
+  const tps =
+    current.tps ??
+    (outputTokens && generationMs
+      ? Number((outputTokens / (generationMs / 1000)).toFixed(1))
+      : null);
+
+  return {
+    ...current,
+    durationMs,
+    outputTokens,
+    tps,
+    tokenSource: current.tokenSource ?? "estimated",
+  };
+}
+
+function estimateTokenCount(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  return Math.max(1, Math.round(trimmed.length / 4));
 }
 
 function providerFromServices(services: ServicesResponse): ModelProviderState | null {

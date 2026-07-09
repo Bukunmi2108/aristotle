@@ -3,12 +3,14 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  ExternalLink,
   Loader2,
   Menu,
   MoreHorizontal,
   Pause,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Send,
   TriangleAlert,
@@ -22,12 +24,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { serviceSummary } from "./api";
+import { sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
 import type {
   ChatMessage,
   Conversation,
   MessagePart,
   ModelProviderState,
   RunState,
+  SourcePreview,
   ServicesResponse,
 } from "./types";
 
@@ -383,7 +387,11 @@ type MessageListProps = {
   conversation?: Conversation;
   detailsOpen: Record<string, boolean>;
   setDetailsOpen: Dispatch<SetStateAction<Record<string, boolean>>>;
-  onCopyMessage: (message: ChatMessage) => void;
+  onCopyMessage: (message: ChatMessage) => void | Promise<void>;
+  onCopyMessageWithSources: (message: ChatMessage) => void | Promise<void>;
+  onCopyMessageSources: (message: ChatMessage) => void | Promise<void>;
+  onRetryMessage: (message: ChatMessage) => void;
+  isRunning: boolean;
   onPickPrompt: (prompt: string) => void;
 };
 
@@ -392,18 +400,30 @@ export function MessageList({
   detailsOpen,
   setDetailsOpen,
   onCopyMessage,
+  onCopyMessageWithSources,
+  onCopyMessageSources,
+  onRetryMessage,
+  isRunning,
   onPickPrompt,
 }: MessageListProps) {
   return (
     <div className="message-scroll">
       {conversation?.messages.length ? (
-        conversation.messages.map((message) => (
+        conversation.messages.map((message, index) => (
           <MessageBubble
             key={message.id}
             message={message}
             detailsOpen={detailsOpen}
             setDetailsOpen={setDetailsOpen}
             onCopy={() => onCopyMessage(message)}
+            onCopyWithSources={() => onCopyMessageWithSources(message)}
+            onCopySources={() => onCopyMessageSources(message)}
+            onRetry={() => onRetryMessage(message)}
+            canRetry={canRetryAssistantMessage(
+              conversation.messages,
+              index,
+              isRunning,
+            )}
           />
         ))
       ) : (
@@ -492,11 +512,19 @@ function MessageBubble({
   detailsOpen,
   setDetailsOpen,
   onCopy,
+  onCopyWithSources,
+  onCopySources,
+  onRetry,
+  canRetry,
 }: {
   message: ChatMessage;
   detailsOpen: Record<string, boolean>;
   setDetailsOpen: Dispatch<SetStateAction<Record<string, boolean>>>;
-  onCopy: () => void;
+  onCopy: () => void | Promise<void>;
+  onCopyWithSources: () => void | Promise<void>;
+  onCopySources: () => void | Promise<void>;
+  onRetry: () => void;
+  canRetry: boolean;
 }) {
   const reasoning =
     message.parts?.filter((part) => part.type === "reasoning") ?? [];
@@ -507,6 +535,9 @@ function MessageBubble({
   );
   const isDetailsOpen = detailsOpen[message.id] ?? message.status === "streaming";
   const toolTraceOpen = !hasText;
+  const sources = sourcesFromMessage(message);
+  const visibleSources = message.status === "streaming" ? [] : sources;
+  const showFooter = message.status !== "streaming";
 
   if (message.role === "user") {
     return <div className="message message--user">{message.content}</div>;
@@ -559,15 +590,23 @@ function MessageBubble({
               key={group.id}
               group={group}
               toolTraceOpen={toolTraceOpen}
+              sources={visibleSources}
             />
           ))}
           {message.status === "streaming" && <span className="stream-caret" />}
         </div>
 
-        <button className="copy-button" onClick={onCopy} type="button">
-          <Copy size={14} strokeWidth={iconStroke} />
-          Copy
-        </button>
+        {showFooter && (
+          <MessageFooter
+            message={message}
+            sources={visibleSources}
+            onCopy={onCopy}
+            onCopyWithSources={onCopyWithSources}
+            onCopySources={onCopySources}
+            onRetry={onRetry}
+            canRetry={canRetry}
+          />
+        )}
       </div>
     </article>
   );
@@ -580,22 +619,63 @@ type MessagePartGroup =
 function MessagePartGroupView({
   group,
   toolTraceOpen,
+  sources,
 }: {
   group: MessagePartGroup;
   toolTraceOpen: boolean;
+  sources: SourcePreview[];
 }) {
   if (group.type === "tools") {
     return <ToolTrace parts={group.parts} defaultOpen={toolTraceOpen} />;
   }
 
-  return <MessagePartView part={group.part} />;
+  return <MessagePartView part={group.part} sources={sources} />;
 }
 
-function MessagePartView({ part }: { part: MessagePart }) {
+function MessagePartView({
+  part,
+  sources,
+}: {
+  part: MessagePart;
+  sources: SourcePreview[];
+}) {
   if (part.type === "text") {
+    const cleanedText = stripDuplicateCitationList(part.text);
+    const markdown = sources.length
+      ? linkCitationMarkers(cleanedText, sources)
+      : cleanedText;
     return (
       <div className="message-text">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({ href, children, ...props }) => {
+              const source = sourceForHref(href, sources);
+              const isCitation = Boolean(source) && citationText(children);
+              if (source && isCitation) {
+                return (
+                  <CitationMarker
+                    href={href || source.url || "#"}
+                    source={source}
+                  />
+                );
+              }
+              return (
+                <a
+                  {...props}
+                  href={href}
+                  rel="noreferrer"
+                  target={href?.startsWith("http") ? "_blank" : undefined}
+                  title={source ? sourceTitle(source) : undefined}
+                >
+                  {children}
+                </a>
+              );
+            },
+          }}
+        >
+          {markdown}
+        </ReactMarkdown>
       </div>
     );
   }
@@ -646,6 +726,218 @@ function ToolTrace({
         ))}
       </ol>
     </details>
+  );
+}
+
+function CitationMarker({
+  href,
+  source,
+}: {
+  href: string;
+  source: SourcePreview;
+}) {
+  const label = source.citationIndex ? String(source.citationIndex) : "";
+
+  return (
+    <span className="inline-citation">
+      <a
+        className="citation-link"
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open source ${label}: ${source.title || source.domain || "Source"}`}
+      >
+        {label}
+      </a>
+      <span className="citation-popover" role="tooltip">
+        <a href={href} target="_blank" rel="noreferrer">
+          <span>{label}</span>
+          <strong>{source.title || source.domain || "Source"}</strong>
+          {source.domain && <em>{source.domain}</em>}
+          {source.snippet && <small>{source.snippet}</small>}
+        </a>
+      </span>
+    </span>
+  );
+}
+
+function MessageSources({ sources }: { sources: SourcePreview[] }) {
+  const usableSources = sources.filter((source) => source.url);
+  if (!usableSources.length) return null;
+
+  return (
+    <details className="message-sources">
+      <summary className="message-sources__header">
+        <span>Sources</span>
+        <strong>{usableSources.length}</strong>
+      </summary>
+      <ol className="source-list">
+        {usableSources.map((source) => (
+          <li key={source.id || source.url}>
+            <a href={source.url || "#"} target="_blank" rel="noreferrer">
+              <span className="source-list__index">
+                {source.citationIndex ?? ""}
+              </span>
+              <span className="source-list__body">
+                <strong>{source.title || source.domain || source.url}</strong>
+                <span>{source.domain || source.url}</span>
+                {source.snippet && <em>{source.snippet}</em>}
+              </span>
+              <ExternalLink size={13} strokeWidth={iconStroke} />
+            </a>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function MessageFooter({
+  message,
+  sources,
+  onCopy,
+  onCopyWithSources,
+  onCopySources,
+  onRetry,
+  canRetry,
+}: {
+  message: ChatMessage;
+  sources: SourcePreview[];
+  onCopy: () => void | Promise<void>;
+  onCopyWithSources: () => void | Promise<void>;
+  onCopySources: () => void | Promise<void>;
+  onRetry: () => void;
+  canRetry: boolean;
+}) {
+  return (
+    <footer className="assistant-message__footer">
+      {sources.length > 0 && <MessageSources sources={sources} />}
+      <div className="message-actions-row">
+        <MessageActions
+          hasSources={sources.some((source) => source.url)}
+          onCopy={onCopy}
+          onCopyWithSources={onCopyWithSources}
+          onCopySources={onCopySources}
+          onRetry={onRetry}
+          canRetry={canRetry}
+        />
+        <MessageMetrics metrics={message.metrics} />
+      </div>
+    </footer>
+  );
+}
+
+function MessageActions({
+  hasSources,
+  onCopy,
+  onCopyWithSources,
+  onCopySources,
+  onRetry,
+  canRetry,
+}: {
+  hasSources: boolean;
+  onCopy: () => void | Promise<void>;
+  onCopyWithSources: () => void | Promise<void>;
+  onCopySources: () => void | Promise<void>;
+  onRetry: () => void;
+  canRetry: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const moreRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const element = moreRef.current;
+      if (!element?.open || !event.target) return;
+      if (!element.contains(event.target as Node)) {
+        element.open = false;
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && moreRef.current?.open) {
+        moreRef.current.open = false;
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  async function copy() {
+    await onCopy();
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  return (
+    <div className="message-actions" aria-label="Message actions">
+      <button
+        className="message-action-button"
+        onClick={() => void copy()}
+        type="button"
+        title={copied ? "Copied" : "Copy"}
+        aria-label={copied ? "Copied" : "Copy"}
+      >
+        {copied ? (
+          <Check size={14} strokeWidth={iconStroke} />
+        ) : (
+          <Copy size={14} strokeWidth={iconStroke} />
+        )}
+      </button>
+      <button
+        className="message-action-button"
+        onClick={onRetry}
+        type="button"
+        title="Retry"
+        aria-label="Retry"
+        disabled={!canRetry}
+      >
+        <RotateCcw size={14} strokeWidth={iconStroke} />
+      </button>
+      <details className="message-more" ref={moreRef}>
+        <summary
+          className="message-action-button"
+          title="More"
+          aria-label="More message actions"
+        >
+          <MoreHorizontal size={15} strokeWidth={iconStroke} />
+        </summary>
+        <div className="message-more__popover">
+          <button type="button" onClick={() => void onCopy()}>
+            Copy markdown
+          </button>
+          <button type="button" onClick={() => void onCopyWithSources()}>
+            Copy with sources
+          </button>
+          {hasSources && (
+            <button type="button" onClick={() => void onCopySources()}>
+              Copy sources
+            </button>
+          )}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function MessageMetrics({ metrics }: { metrics: ChatMessage["metrics"] }) {
+  const items = messageMetricItems(metrics);
+  if (!items.length) return null;
+
+  return (
+    <dl className="message-metrics" aria-label="Message metrics">
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -797,6 +1089,107 @@ function toolStatus(part: Extract<MessagePart, { type: "tool" }>): string {
   if (part.status === "error") return part.message || "Failed";
   if (part.resultCount === undefined) return "Done";
   return `${part.resultCount} result${part.resultCount === 1 ? "" : "s"}`;
+}
+
+function canRetryAssistantMessage(
+  messages: ChatMessage[],
+  index: number,
+  isRunning: boolean,
+) {
+  if (isRunning) return false;
+  const message = messages[index];
+  if (message.role !== "assistant" || message.status === "streaming") {
+    return false;
+  }
+  return messages
+    .slice(0, index)
+    .some((item) => item.role === "user" && item.content?.trim());
+}
+
+function messageMetricItems(metrics: ChatMessage["metrics"]) {
+  if (!metrics) return [];
+
+  const estimatedPrefix = metrics.tokenSource === "estimated" ? "~" : "";
+  return [
+    metrics.ttftMs !== null && metrics.ttftMs !== undefined
+      ? { label: "TTFT", value: formatDuration(metrics.ttftMs) }
+      : null,
+    metrics.tps !== null && metrics.tps !== undefined
+      ? { label: "TPS", value: `${estimatedPrefix}${formatNumber(metrics.tps)}` }
+      : null,
+    metrics.outputTokens !== null && metrics.outputTokens !== undefined
+      ? {
+          label: "TOK",
+          value: `${estimatedPrefix}${formatNumber(metrics.outputTokens)}`,
+        }
+      : null,
+    metrics.durationMs !== null && metrics.durationMs !== undefined
+      ? { label: "TIME", value: formatDuration(metrics.durationMs) }
+      : null,
+  ].filter((item): item is { label: string; value: string } => Boolean(item));
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function formatNumber(value: number) {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(1);
+}
+
+function stripDuplicateCitationList(text: string): string {
+  return text
+    .replace(
+      /\n{1,3}(?:#{1,4}\s*)?(?:citations|references|sources)\s*:?\s*\n(?:\s*(?:[-*]\s*)?\[\d{1,2}\]\s+https?:\/\/\S+\s*)+$/i,
+      "",
+    )
+    .trimEnd();
+}
+
+function linkCitationMarkers(text: string, sources: SourcePreview[]): string {
+  return text.replace(/\[(\d{1,2})\](?!\()/g, (match, rawIndex: string) => {
+    const source = sources.find(
+      (item) => item.citationIndex === Number(rawIndex) && item.url,
+    );
+    if (!source?.url) return match;
+    return `[${rawIndex}](${source.url})`;
+  });
+}
+
+function sourceForHref(
+  href: string | undefined,
+  sources: SourcePreview[],
+): SourcePreview | undefined {
+  if (!href) return undefined;
+  return sources.find((source) => source.url && sameSourceUrl(source.url, href));
+}
+
+function citationText(children: unknown): boolean {
+  const text = childrenText(children).trim();
+  return /^\[?\d{1,2}\]?$/.test(text);
+}
+
+function childrenText(children: unknown): string {
+  if (typeof children === "string" || typeof children === "number") {
+    return String(children);
+  }
+  if (Array.isArray(children)) {
+    return children.map(childrenText).join("");
+  }
+  return "";
+}
+
+function sourceTitle(source: SourcePreview): string {
+  return [
+    source.title || source.domain || "Source",
+    source.domain,
+    source.snippet,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function providerLabel(provider: ModelProviderState): string {

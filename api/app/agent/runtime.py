@@ -1,6 +1,8 @@
 from typing import Any
 from time import perf_counter
+from urllib.parse import urlparse
 
+from pydantic import BaseModel
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
@@ -137,10 +139,12 @@ class AristotleAgentRuntime:
 def _result_count(content: Any) -> int | None:
     if isinstance(content, SearchResponse):
         return len(content.results)
-    if isinstance(content, dict):
-        results = content.get("results")
-        if isinstance(results, list):
-            return len(results)
+    data = _as_dict(content)
+    if data:
+        for key in ("results", "sources", "citations", "facts", "failures"):
+            values = data.get(key)
+            if isinstance(values, list):
+                return len(values)
     return None
 
 
@@ -216,28 +220,96 @@ def _message_history(user_message: ClientUserMessage) -> list[ModelMessage]:
 
 def _result_preview(content: Any) -> list[dict[str, Any]] | None:
     if isinstance(content, SearchResponse):
-        return [
-            {
-                "title": result.title,
-                "url": result.url,
-                "source": result.source,
-            }
-            for result in content.results[:3]
-        ]
+        return [_source_preview(result.model_dump(), status="searched") for result in content.results[:5]]
 
+    data = _as_dict(content)
+    if not data:
+        return None
+
+    preview: list[dict[str, Any]] = []
+    for key, status in (
+        ("results", "searched"),
+        ("sources", "ranked"),
+        ("citations", "cited"),
+        ("facts", "cited"),
+    ):
+        values = data.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict):
+                source = _source_preview(item, status=status)
+                if source:
+                    preview.append(source)
+
+    failures = data.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if isinstance(failure, dict) and failure.get("input"):
+                preview.append(
+                    {
+                        "title": failure.get("input"),
+                        "url": failure.get("input"),
+                        "snippet": failure.get("error"),
+                        "status": "failed",
+                    }
+                )
+
+    return _dedupe_source_previews(preview)[:8] or None
+
+
+def _as_dict(content: Any) -> dict[str, Any] | None:
     if isinstance(content, dict):
-        results = content.get("results")
-        if isinstance(results, list):
-            preview = []
-            for result in results[:3]:
-                if isinstance(result, dict):
-                    preview.append(
-                        {
-                            "title": result.get("title"),
-                            "url": result.get("url"),
-                            "source": result.get("source"),
-                        }
-                    )
-            return preview
-
+        return content
+    if isinstance(content, BaseModel):
+        return content.model_dump()
     return None
+
+
+def _source_preview(item: dict[str, Any], *, status: str) -> dict[str, Any]:
+    url = item.get("url")
+    if not isinstance(url, str) or not url:
+        return {}
+
+    title = item.get("title")
+    snippet = item.get("snippet") or item.get("fact") or item.get("content")
+    source = {
+        "title": title if isinstance(title, str) else None,
+        "url": url,
+        "domain": _domain(url),
+        "source": item.get("source") if isinstance(item.get("source"), str) else None,
+        "snippet": _preview_text(snippet),
+        "status": status,
+    }
+    if item.get("marker"):
+        source["marker"] = item.get("marker")
+    return source
+
+
+def _dedupe_source_previews(
+    previews: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for preview in previews:
+        url = preview.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        current = deduped.get(url, {})
+        deduped[url] = {**preview, **{key: value for key, value in current.items() if value}}
+    return list(deduped.values())
+
+
+def _domain(url: str) -> str | None:
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return None
+    return parsed.hostname.removeprefix("www.")
+
+
+def _preview_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return None
+    return cleaned[:280]

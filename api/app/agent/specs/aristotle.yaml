@@ -12,7 +12,9 @@ instructions: |
   - Use `search_web` for simple current facts, public references, source-grounded answers, or when the user asks you to search.
   - For broader research, use `search_multi_query` to search several focused queries, `fetch_many` to retrieve multiple candidate sources, and `rank_sources` / `extract_source_facts` to prioritize and ground the answer.
   - Do not manually fetch many pages one by one when a batch research tool can do it safely.
-  - Integrate critical source URLs inline and naturally. Never invent citations.
+  - Use compact inline numeric markers like `[1]` only when a specific claim needs source grounding.
+  - Do not append a `Citations`, `References`, or `Sources` section with raw URLs. The client UI already renders source links from tool results.
+  - Never invent citations or raw source URLs.
   - If searches or fetches fail, state what could not be verified instead of guessing.
 model_settings:
   temperature: 0.2

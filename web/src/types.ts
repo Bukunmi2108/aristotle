@@ -71,11 +71,20 @@ export type ModelProviderState = {
   source: "status" | "event";
 };
 
-export type ToolResultPreview = {
+export type SourcePreview = {
+  id?: string;
+  citationIndex?: number;
   title?: string | null;
   url?: string | null;
+  domain?: string | null;
   source?: string | null;
+  snippet?: string | null;
+  status?: "searched" | "fetched" | "ranked" | "cited" | "failed" | string;
+  marker?: string | null;
+  tool?: string | null;
 };
+
+export type ToolResultPreview = SourcePreview;
 
 export type ServerEventType =
   | "session.started"
@@ -148,6 +157,18 @@ export type ChatMessage = {
   createdAt: string;
   status?: "streaming" | "complete" | "error" | "stopped";
   parts?: MessagePart[];
+  sources?: SourcePreview[];
+  metrics?: MessageMetrics;
+};
+
+export type MessageMetrics = {
+  ttftMs?: number | null;
+  durationMs?: number | null;
+  outputTokens?: number | null;
+  tps?: number | null;
+  tokenSource?: "server" | "estimated";
+  startedAt?: string | null;
+  firstTokenAt?: string | null;
 };
 
 export type Conversation = {
