@@ -6,8 +6,13 @@ ENV PYTHONUNBUFFERED=1
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 ENV PORT=7860
+ENV PGDATA=/tmp/aristotle-postgres
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock /app/
 
