@@ -194,6 +194,8 @@ def _result_count(content: Any) -> int | None:
     if isinstance(content, SearchResponse):
         return len(content.results)
     data = _as_dict(content)
+    if data is not None and _is_fetch_result(data):
+        return 0 if _is_failed_fetch_result(data) else 1
     if data:
         for key in ("results", "chunks", "sources", "citations", "facts", "failures"):
             values = data.get(key)
@@ -280,6 +282,11 @@ def _result_preview(content: Any) -> list[dict[str, Any]] | None:
     if not data:
         return None
 
+    if _is_fetch_result(data):
+        status = "failed" if _is_failed_fetch_result(data) else "fetched"
+        source = _source_preview(data, status=status)
+        return [source] if source else None
+
     preview: list[dict[str, Any]] = []
     for key, status in (
         ("results", "searched"),
@@ -319,6 +326,21 @@ def _as_dict(content: Any) -> dict[str, Any] | None:
     if isinstance(content, BaseModel):
         return content.model_dump()
     return None
+
+
+def _is_fetch_result(data: dict[str, Any] | None) -> bool:
+    return bool(
+        data
+        and isinstance(data.get("url"), str)
+        and "content" in data
+        and "content_chars" in data
+    )
+
+
+def _is_failed_fetch_result(data: dict[str, Any]) -> bool:
+    title = data.get("title")
+    content = data.get("content")
+    return title is None and isinstance(content, str) and content.startswith("Fetch failed for ")
 
 
 def _source_preview(item: dict[str, Any], *, status: str) -> dict[str, Any]:

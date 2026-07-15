@@ -4,7 +4,7 @@
   "prompt": "Research renewable energy policy adoption where one candidate source is blocked, then summarize what can and cannot be verified.",
   "expectations": {
     "search": "required",
-    "required_tools": ["search_web", "fetch_many"],
+    "required_tools": ["search_web", "fetch_url"],
     "min_queries": 1,
     "min_fetched_urls": 2,
     "min_sources": 1,
@@ -35,17 +35,14 @@
     },
     {
       "type": "tool.started",
-      "tool": "fetch_many",
+      "tool": "fetch_url",
       "input": {
-        "urls": [
-          "https://example.org/energy-report",
-          "https://blocked.example.org/paywalled-report"
-        ]
+        "url": "https://example.org/energy-report"
       }
     },
     {
       "type": "tool.result",
-      "tool": "fetch_many",
+      "tool": "fetch_url",
       "result_preview": [
         {
           "title": "Renewable energy policy report",
@@ -53,7 +50,20 @@
           "domain": "example.org",
           "snippet": "The report says policy incentives increased adoption.",
           "status": "fetched"
-        },
+        }
+      ]
+    },
+    {
+      "type": "tool.started",
+      "tool": "fetch_url",
+      "input": {
+        "url": "https://blocked.example.org/paywalled-report"
+      }
+    },
+    {
+      "type": "tool.result",
+      "tool": "fetch_url",
+      "result_preview": [
         {
           "title": "https://blocked.example.org/paywalled-report",
           "url": "https://blocked.example.org/paywalled-report",

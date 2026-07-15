@@ -35,6 +35,8 @@ def searxng_params(request: SearchRequest) -> dict[str, str]:
     }
     if request.freshness:
         params["time_range"] = request.freshness
+    if request.engines:
+        params["engines"] = ",".join(request.engines)
     return params
 
 
@@ -111,6 +113,24 @@ class SearxngPayload:
             if isinstance(raw_result, dict)
         ]
 
+    @property
+    def unresponsive_engines(self) -> list[str]:
+        raw_engines = self.raw.get("unresponsive_engines")
+        if not isinstance(raw_engines, list):
+            return []
+
+        engines: list[str] = []
+        for raw_engine in raw_engines:
+            if isinstance(raw_engine, str):
+                engine = raw_engine
+            elif isinstance(raw_engine, (list, tuple)) and raw_engine:
+                engine = str(raw_engine[0])
+            else:
+                continue
+            if engine and engine not in engines:
+                engines.append(engine)
+        return engines
+
     def normalize(self, request: SearchRequest) -> tuple[list[SearchResult], list[str]]:
         normalized_results: list[SearchResult] = []
         seen_urls: set[str] = set()
@@ -120,7 +140,11 @@ class SearxngPayload:
             engines.update(raw_result.engines)
 
             canonical = raw_result.canonical_url
-            if canonical is None or canonical in seen_urls or not url_matches_domains(canonical, request.domains):
+            if (
+                canonical is None
+                or canonical in seen_urls
+                or not url_matches_domains(canonical, request.domains)
+            ):
                 continue
 
             normalized = raw_result.to_search_result()
@@ -149,22 +173,37 @@ class SearxngClient:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="search backend timed out") from exc
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="search backend timed out",
+            ) from exc
         except httpx.ConnectError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="search backend is unavailable") from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="search backend is unavailable",
+            ) from exc
         except httpx.HTTPStatusError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"search backend returned HTTP {exc.response.status_code}",
             ) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="search backend request failed") from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="search backend request failed",
+            ) from exc
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="search backend returned invalid JSON") from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="search backend returned invalid JSON",
+            ) from exc
 
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="search backend returned unexpected JSON")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="search backend returned unexpected JSON",
+            )
         return SearxngPayload(payload)

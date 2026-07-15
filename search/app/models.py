@@ -13,6 +13,7 @@ class SearchRequest(BaseModel):
     freshness: Freshness | None = None
     domains: list[str] = Field(default_factory=list, max_length=5)
     category: Category = "general"
+    engines: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("query")
     @classmethod
@@ -38,6 +39,20 @@ class SearchRequest(BaseModel):
                 normalized.append(domain)
         return normalized
 
+    @field_validator("engines")
+    @classmethod
+    def normalize_engines(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            engine = " ".join(value.strip().lower().split())
+            if not engine:
+                continue
+            if any(char in engine for char in {",", "\n", "\r", "\t"}):
+                raise ValueError(f"invalid engine: {value}")
+            if engine not in normalized:
+                normalized.append(engine)
+        return normalized
+
 
 class SearchResult(BaseModel):
     title: str
@@ -53,6 +68,9 @@ class SearchMetadata(BaseModel):
     result_count: int
     engines: list[str] = Field(default_factory=list)
     fallback_used: bool = False
+    unresponsive_engines: list[str] = Field(default_factory=list)
+    attempts: list[dict] = Field(default_factory=list)
+    empty_reason: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -68,6 +86,9 @@ class SearchResponse(BaseModel):
         engines: list[str],
         elapsed_ms: int,
         fallback_used: bool = False,
+        unresponsive_engines: list[str] | None = None,
+        attempts: list[dict] | None = None,
+        empty_reason: str | None = None,
     ) -> "SearchResponse":
         return cls(
             query=request.query,
@@ -77,6 +98,9 @@ class SearchResponse(BaseModel):
                 result_count=len(results),
                 engines=engines,
                 fallback_used=fallback_used,
+                unresponsive_engines=unresponsive_engines or [],
+                attempts=attempts or [],
+                empty_reason=empty_reason,
             ),
         )
 

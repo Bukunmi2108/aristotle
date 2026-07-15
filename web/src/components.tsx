@@ -986,8 +986,6 @@ function activeToolLabel(toolName: string): string {
       return "Searching the web";
     case "fetch_url":
       return "Opening source";
-    case "fetch_many":
-      return "Fetching sources";
     case "rank_sources":
       return "Reviewing sources";
     case "extract_source_facts":
@@ -1018,7 +1016,7 @@ function toolCategory(toolName: string): "document" | "web" | "fetch" | "review"
   if (normalized === "search_web" || normalized === "search_multi_query") {
     return "web";
   }
-  if (normalized === "fetch_url" || normalized === "fetch_many") {
+  if (normalized === "fetch_url") {
     return "fetch";
   }
   if (
@@ -1312,7 +1310,10 @@ function ToolTraceItem({
                   [
                     `${index + 1}. ${result.title || "Untitled"}`,
                     result.url,
+                    result.domain ? `domain: ${result.domain}` : "",
                     result.source ? `source: ${result.source}` : "",
+                    result.status ? `status: ${result.status}` : "",
+                    result.snippet,
                   ]
                     .filter(Boolean)
                     .join("\n"),

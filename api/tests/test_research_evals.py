@@ -168,8 +168,13 @@ class ResearchEvalFixturesTest(unittest.TestCase):
                 },
                 {
                     "type": "tool.started",
-                    "tool": "fetch_many",
-                    "input": {"urls": ["https://a.example", "https://b.example"]},
+                    "tool": "fetch_url",
+                    "input": {"url": "https://a.example"},
+                },
+                {
+                    "type": "tool.started",
+                    "tool": "fetch_url",
+                    "input": {"url": "https://b.example"},
                 },
                 {
                     "type": "tool.result",

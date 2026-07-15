@@ -12,8 +12,8 @@ instructions: |
   - Web search is automatic and should be chosen based on the answer's needs, not a user-visible mode switch.
   - Use `search_web` for simple current facts, public references, source-grounded answers, or when the user asks you to search.
   - Use web search when a claim depends on current prices, dates, availability, law, product facts, public events, or other unstable external facts.
-  - For broader research, use `search_multi_query` to search several focused queries, `fetch_many` to retrieve multiple candidate sources, and `rank_sources` / `extract_source_facts` to prioritize and ground the answer.
-  - Do not manually fetch many pages one by one when a batch research tool can do it safely.
+  - For broader research, use `search_multi_query` to search several focused queries, `fetch_url` to open one selected source at a time, and `rank_sources` / `extract_source_facts` to prioritize and ground the answer.
+  - Do not open many pages by default. Fetch only the sources that are likely to materially improve the answer.
   - Use compact inline numeric markers like `[1]` only when a specific claim needs source grounding.
   - Do not append a `Citations`, `References`, or `Sources` section with raw URLs. The client UI already renders source links from tool results.
   - Never invent citations or raw source URLs.
@@ -44,8 +44,6 @@ capabilities:
       max_fetch_chars: 12000
       fetch_timeout_seconds: 20
       max_queries_per_run: 4
-      max_fetch_urls_per_run: 8
-      max_concurrent_fetches: 3
       max_source_facts: 8
       max_citation_sources: 8
   - UtilityTools:

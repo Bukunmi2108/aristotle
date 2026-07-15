@@ -166,6 +166,20 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     "service": exc.service,
                 }
             )
+    except asyncio.CancelledError:
+        message = "Request was cancelled while running a tool."
+        await _mark_failed_run(websocket, events, message)
+        if events is not None:
+            await events.send("error", code="request_cancelled", message=message)
+        else:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "sequence": 1,
+                    "code": "request_cancelled",
+                    "message": message,
+                }
+            )
     except Exception as exc:
         await _mark_failed_run(websocket, events, str(exc))
         if events is not None:

@@ -87,6 +87,16 @@ class ResearchToolsHelpersTest(unittest.TestCase):
 
         self.assertEqual([tool.name for tool in filtered], ["calculate"])
 
+    def test_research_tools_do_not_expose_fetch_many(self):
+        self.assertNotIn("fetch_many", RESEARCH_TOOL_NAMES)
+        instructions = ResearchTools().get_instructions()(
+            cast(Any, SimpleNamespace(deps=SimpleNamespace(web_tools_enabled=True)))
+        )
+
+        assert instructions is not None
+        self.assertNotIn("fetch_many", instructions)
+        self.assertIn("fetch_url", instructions)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
   "prompt": "Research how urban tree cover affects heat and public health in cities.",
   "expectations": {
     "search": "required",
-    "required_tools": ["search_multi_query", "fetch_many"],
+    "required_tools": ["search_multi_query", "fetch_url"],
     "min_queries": 3,
     "min_fetched_urls": 3,
     "min_sources": 3,
@@ -54,18 +54,14 @@
       },
       {
         "type": "tool.started",
-        "tool": "fetch_many",
+        "tool": "fetch_url",
         "input": {
-          "urls": [
-            "https://www.epa.gov/heatislands/using-trees-and-vegetation-reduce-heat-islands",
-            "https://www.nature.com/articles/s41467-023-00000-0",
-            "https://www.who.int/publications/i/item/urban-green-spaces"
-          ]
+          "url": "https://www.epa.gov/heatislands/using-trees-and-vegetation-reduce-heat-islands"
         }
       },
       {
         "type": "tool.result",
-        "tool": "fetch_many",
+        "tool": "fetch_url",
         "result_preview": [
           {
             "title": "Using trees and vegetation to reduce heat islands",
@@ -73,14 +69,40 @@
             "domain": "epa.gov",
             "snippet": "Trees and vegetation reduce heat islands through shade and evapotranspiration.",
             "status": "fetched"
-          },
+          }
+        ]
+      },
+      {
+        "type": "tool.started",
+        "tool": "fetch_url",
+        "input": {
+          "url": "https://www.nature.com/articles/s41467-023-00000-0"
+        }
+      },
+      {
+        "type": "tool.result",
+        "tool": "fetch_url",
+        "result_preview": [
           {
             "title": "Urban tree cover and mortality",
             "url": "https://www.nature.com/articles/s41467-023-00000-0",
             "domain": "nature.com",
             "snippet": "Higher tree cover is associated with lower heat-related mortality.",
             "status": "fetched"
-          },
+          }
+        ]
+      },
+      {
+        "type": "tool.started",
+        "tool": "fetch_url",
+        "input": {
+          "url": "https://www.who.int/publications/i/item/urban-green-spaces"
+        }
+      },
+      {
+        "type": "tool.result",
+        "tool": "fetch_url",
+        "result_preview": [
           {
             "title": "Urban green spaces and health",
             "url": "https://www.who.int/publications/i/item/urban-green-spaces",
@@ -138,18 +160,14 @@
       },
       {
         "type": "tool.started",
-        "tool": "fetch_many",
+        "tool": "fetch_url",
         "input": {
-          "urls": [
-            "https://www.epa.gov/heatislands/using-trees-and-vegetation-reduce-heat-islands",
-            "https://www.cdc.gov/climate-health/php/effects/heat.htm",
-            "https://www.who.int/publications/i/item/urban-green-spaces"
-          ]
+          "url": "https://www.epa.gov/heatislands/using-trees-and-vegetation-reduce-heat-islands"
         }
       },
       {
         "type": "tool.result",
-        "tool": "fetch_many",
+        "tool": "fetch_url",
         "result_preview": [
           {
             "title": "Using trees and vegetation to reduce heat islands",
@@ -157,14 +175,40 @@
             "domain": "epa.gov",
             "snippet": "Trees and vegetation reduce city heat through shading and cooling.",
             "status": "fetched"
-          },
+          }
+        ]
+      },
+      {
+        "type": "tool.started",
+        "tool": "fetch_url",
+        "input": {
+          "url": "https://www.cdc.gov/climate-health/php/effects/heat.htm"
+        }
+      },
+      {
+        "type": "tool.result",
+        "tool": "fetch_url",
+        "result_preview": [
           {
             "title": "Heat and health",
             "url": "https://www.cdc.gov/climate-health/php/effects/heat.htm",
             "domain": "cdc.gov",
             "snippet": "Extreme heat can cause illness and death, with urban populations at risk.",
             "status": "fetched"
-          },
+          }
+        ]
+      },
+      {
+        "type": "tool.started",
+        "tool": "fetch_url",
+        "input": {
+          "url": "https://www.who.int/publications/i/item/urban-green-spaces"
+        }
+      },
+      {
+        "type": "tool.result",
+        "tool": "fetch_url",
+        "result_preview": [
           {
             "title": "Urban green spaces and health",
             "url": "https://www.who.int/publications/i/item/urban-green-spaces",

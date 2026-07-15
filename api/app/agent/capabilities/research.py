@@ -21,7 +21,6 @@ RESEARCH_TOOL_NAMES = {
     "search_web",
     "fetch_url",
     "search_multi_query",
-    "fetch_many",
     "extract_source_facts",
     "rank_sources",
     "build_citations",
@@ -48,11 +47,6 @@ class SearchMultiQueryResult(BaseModel):
     queries: list[str]
     results: list[SearchResult]
     responses: list[SearchResponse]
-    failures: list[ResearchFailure] = Field(default_factory=list)
-
-
-class FetchManyResult(BaseModel):
-    results: list[FetchUrlResult]
     failures: list[ResearchFailure] = Field(default_factory=list)
 
 
@@ -109,8 +103,6 @@ class CitationBuildResult(BaseModel):
 @dataclass
 class ResearchTools(LocalWebTools):
     max_queries_per_run: int = 4
-    max_fetch_urls_per_run: int = 8
-    max_concurrent_fetches: int = 3
     max_source_facts: int = 8
     max_citation_sources: int = 8
 
@@ -121,9 +113,9 @@ class ResearchTools(LocalWebTools):
             return (
                 "Use search_web and fetch_url as primitive research tools. For broader "
                 "research, use search_multi_query to search several focused queries, "
-                "fetch_many to fetch multiple candidate sources safely, rank_sources to "
-                "prioritize evidence, extract_source_facts to pull concise source facts, "
-                "and build_citations to map known source URLs into citation candidates. "
+                "fetch_url to open one selected source at a time, rank_sources to prioritize "
+                "evidence, extract_source_facts to pull concise source facts, and "
+                "build_citations to map known source URLs into citation candidates. "
                 "Do not invent citations. Treat failed fetches as source gaps and say "
                 "what could not be verified when it matters."
             )
@@ -197,9 +189,26 @@ class ResearchTools(LocalWebTools):
             ]
             responses: list[SearchResponse] = []
             failures: list[ResearchFailure] = []
+            try:
+                outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                return SearchMultiQueryResult(
+                    goal=goal,
+                    queries=capped_queries,
+                    results=[],
+                    responses=[],
+                    failures=[
+                        ResearchFailure(
+                            operation="search",
+                            input=query,
+                            error="Search batch was cancelled before completion.",
+                        )
+                        for query in capped_queries
+                    ],
+                )
             for query, outcome in zip(
                 capped_queries,
-                await asyncio.gather(*tasks, return_exceptions=True),
+                outcomes,
                 strict=False,
             ):
                 if isinstance(outcome, BaseException):
@@ -225,61 +234,6 @@ class ResearchTools(LocalWebTools):
                 responses=responses,
                 failures=failures,
             )
-
-        @toolset.tool(
-            name="fetch_many", strict=False, timeout=self.fetch_timeout_seconds
-        )
-        async def fetch_many(
-            ctx: RunContext[AgentDeps],
-            urls: list[str],
-        ) -> FetchManyResult:
-            """Fetch several public HTTP(S) URLs concurrently with per-run limits."""
-            capped_urls = _cap_unique_strings(urls, self.max_fetch_urls_per_run)
-            await ctx.deps.events.send(
-                "tool.started", tool="fetch_many", input={"urls": capped_urls}
-            )
-            semaphore = asyncio.Semaphore(max(1, self.max_concurrent_fetches))
-
-            async def fetch_one(url: str) -> FetchUrlResult:
-                async with semaphore:
-                    return await self.fetch_url_impl(
-                        ctx,
-                        url=url,
-                        tool_name="fetch_many.fetch",
-                    )
-
-            results: list[FetchUrlResult] = []
-            failures: list[ResearchFailure] = []
-            for url, outcome in zip(
-                capped_urls,
-                await asyncio.gather(
-                    *(fetch_one(url) for url in capped_urls),
-                    return_exceptions=True,
-                ),
-                strict=False,
-            ):
-                if isinstance(outcome, BaseException):
-                    failures.append(
-                        ResearchFailure(
-                            operation="fetch",
-                            input=url,
-                            error=str(outcome),
-                        )
-                    )
-                    continue
-                result = outcome
-                if _is_fetch_failure(result):
-                    failures.append(
-                        ResearchFailure(
-                            operation="fetch",
-                            input=url,
-                            error=result.content,
-                        )
-                    )
-                    continue
-                results.append(result)
-
-            return FetchManyResult(results=results, failures=failures)
 
         @toolset.tool(name="extract_source_facts", strict=False)
         async def extract_source_facts(
@@ -381,10 +335,6 @@ def _canonical_url(url: str) -> str:
             "",
         )
     )
-
-
-def _is_fetch_failure(result: FetchUrlResult) -> bool:
-    return result.title is None and result.content.startswith("Fetch failed for ")
 
 
 def _extract_facts(source: ResearchSource, max_facts: int) -> list[SourceFact]:

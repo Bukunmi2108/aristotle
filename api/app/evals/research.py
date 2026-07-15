@@ -331,8 +331,6 @@ def _fetch_count(event: dict[str, Any]) -> int:
     payload = event.get("input")
     if not isinstance(payload, dict):
         return 0
-    if event.get("tool") == "fetch_many" and isinstance(payload.get("urls"), list):
-        return len(payload["urls"])
     if event.get("tool") == "fetch_url" and payload.get("url"):
         return 1
     return 0
