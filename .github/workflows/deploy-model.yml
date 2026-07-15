@@ -21,11 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: huggingface/hub-sync@v0.1.0
+      - uses: actions/setup-python@v6
         with:
-          github_repo_id: ${{ github.repository }}
-          huggingface_repo_id: Bukunmi2108/aristotle-model
-          hf_token: ${{ secrets.HF_TOKEN }}
-          repo_type: space
-          space_sdk: docker
-          subdirectory: model
+          python-version: "3.12"
+      - name: Install Hugging Face CLI
+        run: python -m pip install --upgrade "huggingface_hub>=1.18.0"
+      - name: Upload model folder to existing Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: >-
+          hf upload Bukunmi2108/aristotle-model model .
+          --repo-type space
+          --delete "*"
+          --commit-message "Deploy ${GITHUB_SHA} from GitHub"
