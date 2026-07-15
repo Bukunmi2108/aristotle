@@ -24,13 +24,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install Hugging Face CLI
-        run: python -m pip install --upgrade "huggingface_hub>=1.18.0"
+      - name: Install Hugging Face Hub client
+        run: python -m pip install "huggingface_hub==1.23.0"
       - name: Upload API folder to existing Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: >-
-          hf upload Bukunmi2108/aristotle-api api .
-          --repo-type space
-          --delete "*"
-          --commit-message "Deploy ${GITHUB_SHA} from GitHub"
+          python -c 'import os; from huggingface_hub import HfApi;
+          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+          repo_id="Bukunmi2108/aristotle-api", repo_type="space",
+          folder_path="api", delete_patterns="*",
+          commit_message="Deploy " + os.environ["GITHUB_SHA"] + " from GitHub")'
