@@ -36,6 +36,7 @@ import {
   sourcesFromMessage,
 } from "./sourceUtils";
 import type {
+  ArtifactRef,
   ChatHistoryMessage,
   ChatMessage,
   Conversation,
@@ -49,6 +50,7 @@ import type {
   ServicesResponse,
   StoredConversation,
   StoredMessage,
+  ToolOutput,
   ToolResultPreview,
 } from "./types";
 
@@ -603,6 +605,8 @@ function App() {
         event.tool,
         event.result_count,
         event.result_preview,
+        event.artifacts,
+        event.output,
       );
       return;
     }
@@ -684,26 +688,34 @@ function App() {
     toolName?: string,
     resultCount?: number,
     resultPreview?: ToolResultPreview[],
+    artifacts?: ArtifactRef[],
+    output?: ToolOutput,
   ) {
+    const partStatus = output && output.status !== "ok" ? "error" : "complete";
+
     updateAssistantParts(conversationId, assistantId, (parts) => {
       const next = [...parts];
       const index = findLastToolIndex(next, toolName, "running");
       if (index >= 0 && next[index].type === "tool") {
         next[index] = {
           ...next[index],
-          status: "complete",
+          status: partStatus,
           resultCount,
           resultPreview,
+          artifacts,
+          output,
         };
       } else {
         next.push({
           id: `tool-result-${crypto.randomUUID()}`,
           type: "tool",
           label: toolName || "tool",
-          status: "complete",
+          status: partStatus,
           timestamp: new Date().toISOString(),
           resultCount,
           resultPreview,
+          artifacts,
+          output,
         });
       }
       return next;

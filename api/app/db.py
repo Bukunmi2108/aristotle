@@ -11,6 +11,8 @@ from app.config import ApiSettings
 
 APP_TABLES = (
     "events",
+    "artifacts",
+    "sandbox_runs",
     "runs",
     "message_files",
     "messages",
@@ -123,6 +125,32 @@ create index if not exists files_uploaded_at_idx on files(uploaded_at desc);
 create index if not exists document_chunks_file_idx on document_chunks(file_id, chunk_index);
 create index if not exists conversation_files_conversation_idx on conversation_files(conversation_id);
 create index if not exists message_files_message_idx on message_files(message_id);
+
+create table if not exists sandbox_runs (
+  id text primary key,
+  run_id text references runs(id) on delete cascade,
+  conversation_id text not null references conversations(id) on delete cascade,
+  code text not null,
+  status text not null,
+  stdout text,
+  stderr text,
+  exit_code integer,
+  duration_ms integer,
+  created_at timestamptz not null
+);
+
+create table if not exists artifacts (
+  id text primary key,
+  sandbox_run_id text not null references sandbox_runs(id) on delete cascade,
+  filename text not null,
+  mime_type text not null,
+  size_bytes bigint not null,
+  storage_path text not null,
+  created_at timestamptz not null
+);
+
+create index if not exists sandbox_runs_conversation_idx on sandbox_runs(conversation_id);
+create index if not exists artifacts_sandbox_run_idx on artifacts(sandbox_run_id);
 """
 
 
@@ -578,6 +606,96 @@ class PersistenceStore:
             limit,
         )
         return [_record_to_dict(row) for row in rows]
+
+    async def create_sandbox_run(
+        self,
+        *,
+        sandbox_run_id: str,
+        run_id: str | None,
+        conversation_id: str,
+        code: str,
+    ) -> None:
+        await self.pool.execute(
+            """
+            insert into sandbox_runs (
+              id, run_id, conversation_id, code, status, created_at
+            )
+            values ($1, $2, $3, $4, 'running', $5)
+            on conflict (id) do nothing
+            """,
+            sandbox_run_id,
+            run_id,
+            conversation_id,
+            code,
+            _now(),
+        )
+
+    async def complete_sandbox_run(
+        self,
+        sandbox_run_id: str,
+        *,
+        status: str,
+        stdout: str,
+        stderr: str,
+        exit_code: int,
+        duration_ms: int,
+    ) -> None:
+        await self.pool.execute(
+            """
+            update sandbox_runs
+            set status = $2, stdout = $3, stderr = $4, exit_code = $5, duration_ms = $6
+            where id = $1
+            """,
+            sandbox_run_id,
+            status,
+            stdout,
+            stderr,
+            exit_code,
+            duration_ms,
+        )
+
+    async def create_artifact(
+        self,
+        *,
+        artifact_id: str,
+        sandbox_run_id: str,
+        filename: str,
+        mime_type: str,
+        size_bytes: int,
+        storage_path: str,
+    ) -> dict[str, Any]:
+        now = _now()
+        row = await self.pool.fetchrow(
+            """
+            insert into artifacts (
+              id, sandbox_run_id, filename, mime_type, size_bytes, storage_path,
+              created_at
+            )
+            values ($1, $2, $3, $4, $5, $6, $7)
+            returning id, sandbox_run_id, filename, mime_type, size_bytes,
+                      storage_path, created_at
+            """,
+            artifact_id,
+            sandbox_run_id,
+            filename,
+            mime_type,
+            size_bytes,
+            storage_path,
+            now,
+        )
+        return _record_to_dict(row)
+
+    async def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            """
+            select id, sandbox_run_id, filename, mime_type, size_bytes,
+                   storage_path, created_at
+            from artifacts
+            where id = $1
+            """,
+            artifact_id,
+        )
+        return _record_to_dict(row) if row is not None else None
 
 
 async def create_store(settings: ApiSettings) -> PersistenceStore | None:

@@ -106,6 +106,21 @@ export type SourcePreview = {
 
 export type ToolResultPreview = SourcePreview;
 
+export type ArtifactRef = {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
+export type ToolOutput = {
+  status: "ok" | "error" | "timeout" | "rejected";
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  timed_out: boolean;
+};
+
 export type ServerEventType =
   | "session.started"
   | "service.checking"
@@ -137,6 +152,8 @@ export type ServerEvent = {
   input?: Record<string, unknown>;
   result_count?: number;
   result_preview?: ToolResultPreview[];
+  artifacts?: ArtifactRef[];
+  output?: ToolOutput;
   text?: string;
   message?: string;
   code?: string;
@@ -162,6 +179,8 @@ export type MessagePart =
       input?: Record<string, unknown>;
       resultCount?: number;
       resultPreview?: ToolResultPreview[];
+      artifacts?: ArtifactRef[];
+      output?: ToolOutput;
       message?: string;
     }
   | {

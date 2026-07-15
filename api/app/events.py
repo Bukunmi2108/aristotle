@@ -42,6 +42,8 @@ class Event(BaseModel):
     input: dict[str, Any] | None = None
     result_count: int | None = None
     result_preview: list[dict[str, Any]] | None = None
+    artifacts: list[dict[str, Any]] | None = None
+    output: dict[str, Any] | None = None
     text: str | None = None
     message: str | None = None
     code: str | None = None
@@ -66,6 +68,10 @@ class EventSender:
         self._message_id = message_id
         self._store = store
         self._lock = asyncio.Lock()
+
+    @property
+    def run_id(self) -> str | None:
+        return self._run_id
 
     async def send(self, event_type: EventType, **kwargs: Any) -> None:
         async with self._lock:

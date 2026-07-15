@@ -18,6 +18,7 @@ class FakeWebSocket:
             state=SimpleNamespace(
                 model_client=FakeReadyClient(),
                 search_client=FakeReadyClient(),
+                sandbox_executor=None,
                 store=None,
             )
         )

@@ -27,7 +27,8 @@ from app.agent.model_trace import (
 from app.config import ApiSettings
 from app.db import PersistenceStore
 from app.events import EventSender
-from app.models import ClientUserMessage, SearchResponse
+from app.models import ArtifactRecord, ClientUserMessage, SandboxRunResult, SearchResponse
+from app.services.sandbox import SandboxExecutor
 from app.services.search import SearchClient
 
 
@@ -40,10 +41,12 @@ class AristotleAgentRuntime:
         search_client: SearchClient,
         settings: ApiSettings,
         document_store: PersistenceStore | None = None,
+        sandbox_executor: SandboxExecutor | None = None,
     ):
         self.search_client = search_client
         self.settings = settings
         self.document_store = document_store
+        self.sandbox_executor = sandbox_executor
 
     async def stream_response(
         self, user_message: ClientUserMessage, events: EventSender
@@ -58,6 +61,15 @@ class AristotleAgentRuntime:
                 user_message.message,
                 options.file_ids,
             )
+            sandbox_session = (
+                self.sandbox_executor.get_session(
+                    events.run_id, user_message.conversation_id
+                )
+                if self.sandbox_executor is not None
+                and events.run_id is not None
+                and user_message.conversation_id is not None
+                else None
+            )
             deps = AgentDeps(
                 search_client=self.search_client,
                 http_client=self.search_client.http,
@@ -67,6 +79,7 @@ class AristotleAgentRuntime:
                 web_tools_enabled=True,
                 document_store=self.document_store,
                 file_ids=options.file_ids,
+                sandbox_session=sandbox_session,
             )
             final_parts: list[str] = []
             model_started = perf_counter()
@@ -123,6 +136,8 @@ class AristotleAgentRuntime:
             return "".join(final_parts)
         finally:
             reset_model_trace(trace_token)
+            if self.sandbox_executor is not None and events.run_id is not None:
+                await self.sandbox_executor.close_session(events.run_id)
 
     async def _message_with_file_context(
         self,
@@ -169,6 +184,8 @@ class AristotleAgentRuntime:
                 tool=event.part.tool_name,
                 result_count=_result_count(event.part.content),
                 result_preview=_result_preview(event.part.content),
+                artifacts=_result_artifacts(event.part.content),
+                output=_result_output(event.part.content),
             )
             return ""
 
@@ -202,6 +219,35 @@ def _result_count(content: Any) -> int | None:
             if isinstance(values, list):
                 return len(values)
     return None
+
+
+def _result_artifacts(content: Any) -> list[dict[str, Any]] | None:
+    if isinstance(content, SandboxRunResult):
+        if not content.artifacts:
+            return None
+        return [_artifact_ref(artifact) for artifact in content.artifacts]
+    return None
+
+
+def _result_output(content: Any) -> dict[str, Any] | None:
+    if not isinstance(content, SandboxRunResult):
+        return None
+    return {
+        "status": content.status,
+        "stdout": content.stdout,
+        "stderr": content.stderr,
+        "exit_code": content.exit_code,
+        "timed_out": content.timed_out,
+    }
+
+
+def _artifact_ref(artifact: ArtifactRecord) -> dict[str, Any]:
+    return {
+        "id": artifact.id,
+        "filename": artifact.filename,
+        "mime_type": artifact.mime_type,
+        "size_bytes": artifact.size_bytes,
+    }
 
 
 async def _send_model_selection(events: EventSender, trace: ModelTrace) -> None:

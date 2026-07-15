@@ -7,9 +7,13 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
+    "matplotlib>=3.9.0",
+    "numpy>=2.1.0",
+    "pandas>=2.2.0",
     "pydantic>=2.10.0",
     "pydantic-ai-slim[openai,spec]>=0.0.53",
     "pypdf>=5.9.0",
+    "pyseccomp>=0.1.2",
     "uvicorn[standard]>=0.34.0",
 ]
 

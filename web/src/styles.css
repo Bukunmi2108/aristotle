@@ -1670,6 +1670,40 @@ input:focus-visible {
   font-size: 11px;
 }
 
+.artifact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-list__item {
+  margin: 0;
+}
+
+.artifact-list__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 252 / 0.96);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.artifact-list__link:hover {
+  border-color: color-mix(in srgb, var(--accent, currentColor) 40%, var(--line));
+}
+
+.artifact-list__size {
+  color: var(--muted);
+}
+
 .tool-trace__details code {
   display: block;
   max-height: 180px;
@@ -1685,6 +1719,12 @@ input:focus-visible {
   line-height: 1.55;
   padding: 8px;
   white-space: pre-wrap;
+}
+
+.tool-trace__stderr {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger-strong);
 }
 
 .empty-state {

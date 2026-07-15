@@ -7,6 +7,7 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.config import SERVICE_NAME, SETTINGS
 from app.db import PersistenceStore, close_store, create_store
@@ -26,6 +27,7 @@ from app.models import (
     ServicesResponse,
 )
 from app.services.model import ModelClient
+from app.services.sandbox import SandboxExecutor
 from app.services.search import SearchClient
 from app.websocket.chat import router as chat_router
 
@@ -36,6 +38,11 @@ async def lifespan(app: FastAPI):
     store = await create_store(SETTINGS)
     app.state.model_client = ModelClient(http=http, settings=SETTINGS)
     app.state.search_client = SearchClient(http=http, settings=SETTINGS)
+    app.state.sandbox_executor = (
+        SandboxExecutor(settings=SETTINGS, document_store=store)
+        if SETTINGS.sandbox_enabled
+        else None
+    )
     app.state.store = store
     try:
         yield
@@ -206,6 +213,22 @@ async def delete_file(file_id: str) -> dict:
         if path.exists():
             rmtree(path, ignore_errors=True)
     return {"ok": deleted}
+
+
+@app.get("/artifacts/{artifact_id}")
+async def download_artifact(artifact_id: str) -> FileResponse:
+    store = _require_store()
+    artifact = await store.get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+    path = Path(artifact["storage_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file is missing.")
+    return FileResponse(
+        path,
+        media_type=artifact["mime_type"],
+        filename=artifact["filename"],
+    )
 
 
 @app.get("/runs/{run_id}")

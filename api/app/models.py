@@ -100,3 +100,32 @@ class FileRecord(BaseModel):
 
 class FileUploadResponse(BaseModel):
     file: FileRecord
+
+
+class ArtifactRecord(BaseModel):
+    """Model/tool-facing artifact reference.
+
+    Deliberately excludes the host `storage_path` — that stays internal to
+    the sandbox/db layer and is never serialized back to the LLM. Downloads
+    go through `GET /artifacts/{id}`, which re-resolves the path from the DB
+    by id rather than trusting anything on this object.
+    """
+
+    id: str
+    sandbox_run_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+
+
+SandboxRunStatus = Literal["ok", "error", "timeout", "rejected"]
+
+
+class SandboxRunResult(BaseModel):
+    status: SandboxRunStatus
+    stdout: str
+    stderr: str
+    exit_code: int
+    timed_out: bool
+    duration_ms: int
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)

@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   FileText,
   Loader2,
@@ -25,9 +26,10 @@ import type { Dispatch, FormEvent, RefObject, SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { serviceSummary } from "./api";
+import { artifactDownloadUrl, serviceSummary } from "./api";
 import { isDocumentSource, sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
 import type {
+  ArtifactRef,
   ChatMessage,
   Conversation,
   FileRecord,
@@ -1322,9 +1324,48 @@ function ToolTraceItem({
             </code>
           </details>
         ) : null}
+        {part.output && (part.output.stdout || part.output.stderr) ? (
+          <details className="tool-trace__details" open>
+            <summary>Output</summary>
+            {part.output.stdout && <code>{part.output.stdout}</code>}
+            {part.output.stderr && (
+              <code className="tool-trace__stderr">{part.output.stderr}</code>
+            )}
+            {part.output.timed_out && (
+              <code className="tool-trace__stderr">Execution timed out.</code>
+            )}
+          </details>
+        ) : null}
+        {part.artifacts?.length ? <ArtifactList artifacts={part.artifacts} /> : null}
       </div>
     </li>
   );
+}
+
+function ArtifactList({ artifacts }: { artifacts: ArtifactRef[] }) {
+  return (
+    <ul className="artifact-list">
+      {artifacts.map((artifact) => (
+        <li key={artifact.id} className="artifact-list__item">
+          <a
+            className="artifact-list__link"
+            href={artifactDownloadUrl(artifact.id)}
+            download={artifact.filename}
+          >
+            <Download size={13} strokeWidth={iconStroke} />
+            <span className="artifact-list__name">{artifact.filename}</span>
+            <span className="artifact-list__size">{formatArtifactSize(artifact.size_bytes)}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function formatArtifactSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function EmptyState({ onPickPrompt }: { onPickPrompt: (prompt: string) => void }) {

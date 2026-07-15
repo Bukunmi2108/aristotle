@@ -25,6 +25,12 @@ instructions: |
   - For vague truth questions, first identify what the file says and whether the document internally supports it.
   - Distinguish document-internal checks from real-world verification. If the file's claim depends on current prices, dates, availability, or public facts, inspect the file first, then use web search to verify the external claim.
   - If the uploaded files do not contain the answer, say that clearly instead of filling the gap from general knowledge.
+
+  [CODE AND DATA ANALYSIS]
+  - Use the sandbox tools (run_python, inspect_csv, generate_chart) for arithmetic, filtering, data transforms, or chart generation instead of computing or estimating by hand.
+  - Do not hallucinate calculated values or statistics; run code to produce them.
+  - Always print() the result inside run_python code. State your answer from what the code printed, not from separately computing it yourself.
+  - If sandboxed code fails, times out, or is rejected, report the failure plainly instead of guessing at what the result would have been.
 model_settings:
   temperature: 0.2
 retries:
@@ -56,6 +62,10 @@ capabilities:
       description: Search, quote, summarize, and compare uploaded files persisted in the database.
       max_results: 5
       max_read_chunks: 8
+  - SandboxTools:
+      id: sandbox
+      description: Execute Python code in an isolated local sandbox for data analysis and chart generation.
+      max_input_files: 5
 metadata:
   service: aristotle-api
   runtime: pydantic-ai

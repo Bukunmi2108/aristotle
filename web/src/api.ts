@@ -19,6 +19,10 @@ export const agentWsBaseUrl = trimTrailingSlash(
   import.meta.env.VITE_AGENT_WS_BASE_URL || DEFAULT_WS_BASE_URL,
 );
 
+export function artifactDownloadUrl(artifactId: string): string {
+  return `${agentHttpBaseUrl}/artifacts/${encodeURIComponent(artifactId)}`;
+}
+
 export async function fetchServices(): Promise<ServicesResponse> {
   const response = await fetch(`${agentHttpBaseUrl}/services`);
   if (!response.ok) {
