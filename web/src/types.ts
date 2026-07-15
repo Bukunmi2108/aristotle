@@ -40,6 +40,10 @@ export type StoredConversationsResponse = {
   conversations: StoredConversation[];
 };
 
+export type StoredConversationResponse = {
+  conversation: StoredConversation;
+};
+
 export type StoredMessagesResponse = {
   messages: StoredMessage[];
 };

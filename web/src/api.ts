@@ -4,6 +4,8 @@ import type {
   ServerEvent,
   ServiceStatus,
   ServicesResponse,
+  StoredConversation,
+  StoredConversationResponse,
   StoredConversationsResponse,
   StoredMessagesResponse,
 } from "./types";
@@ -37,6 +39,22 @@ export async function fetchConversations(): Promise<StoredConversationsResponse>
     throw new Error(`Conversation history failed with ${response.status}`);
   }
   return response.json() as Promise<StoredConversationsResponse>;
+}
+
+export async function fetchConversation(
+  conversationId: string,
+): Promise<StoredConversation | null> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/conversations/${encodeURIComponent(conversationId)}`,
+  );
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Conversation failed with ${response.status}`);
+  }
+  const payload = (await response.json()) as StoredConversationResponse;
+  return payload.conversation;
 }
 
 export async function fetchConversationMessages(

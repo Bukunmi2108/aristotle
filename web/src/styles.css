@@ -697,6 +697,67 @@ input:focus-visible {
   cursor: default;
 }
 
+.conversation-route-state {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  place-content: center;
+  justify-items: center;
+  padding: 32px 20px;
+  color: var(--text-soft);
+  text-align: center;
+}
+
+.conversation-route-state__spinner {
+  margin-bottom: 18px;
+  color: var(--accent);
+  animation: route-spin 900ms linear infinite;
+}
+
+.conversation-route-state h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.conversation-route-state p {
+  max-width: 420px;
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.conversation-route-state__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.conversation-route-state__actions button {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.conversation-route-state__actions button:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: var(--accent-soft);
+}
+
+@keyframes route-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .message-scroll-shell {
   position: relative;
   display: flex;

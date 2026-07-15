@@ -427,6 +427,50 @@ type MessageListProps = {
   onPickPrompt: (prompt: string) => void;
 };
 
+type ConversationRouteStateProps = {
+  state: "loading" | "not-found" | "error";
+  onNewChat: () => void;
+  onRetry: () => void;
+};
+
+export function ConversationRouteState({
+  state,
+  onNewChat,
+  onRetry,
+}: ConversationRouteStateProps) {
+  const isLoading = state === "loading";
+  const title = isLoading
+    ? "Opening conversation"
+    : state === "not-found"
+      ? "Conversation not found"
+      : "Could not open conversation";
+  const detail = isLoading
+    ? "Loading the requested conversation."
+    : state === "not-found"
+      ? "This link may be invalid, deleted, or no longer available."
+      : "The conversation service could not be reached.";
+
+  return (
+    <div className="conversation-route-state" role={isLoading ? "status" : "alert"}>
+      {isLoading && <Loader2 className="conversation-route-state__spinner" size={22} />}
+      <h2>{title}</h2>
+      <p>{detail}</p>
+      {!isLoading && (
+        <div className="conversation-route-state__actions">
+          {state === "error" && (
+            <button type="button" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+          <button type="button" onClick={onNewChat}>
+            New chat
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageList({
   conversation,
   scrollRef,

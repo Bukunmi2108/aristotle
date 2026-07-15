@@ -11,6 +11,7 @@ import {
   connectChat,
   deleteFile as deleteUploadedFile,
   deleteConversation as deleteServerConversation,
+  fetchConversation,
   fetchConversationMessages,
   fetchConversations,
   fetchServices,
@@ -20,6 +21,7 @@ import {
 import {
   AppHeader,
   Composer,
+  ConversationRouteState,
   HistorySidebar,
   MessageList,
   ServiceAlert,
@@ -35,6 +37,7 @@ import {
   normalizeSourcePreview,
   sourcesFromMessage,
 } from "./sourceUtils";
+import { pathForConversation, routeFromPath } from "./urlSync";
 import type {
   ArtifactRef,
   ChatHistoryMessage,
@@ -61,13 +64,16 @@ const DEFAULT_WAKE_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_WAKE_TIMEOUT_MS = 180_000;
 
 type ServiceWakePhase = "checking" | "waking" | "ready" | "timeout";
+type ConversationRouteStatus = "ready" | "loading" | "not-found" | "error";
 
 function App() {
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    const stored = loadConversations();
-    return stored.length ? stored : [createConversation()];
-  });
-  const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? "");
+  const [initialState] = useState(createInitialConversationState);
+  const [conversations, setConversations] = useState<Conversation[]>(
+    initialState.conversations,
+  );
+  const [activeId, setActiveId] = useState(initialState.activeId);
+  const [routeStatus, setRouteStatus] =
+    useState<ConversationRouteStatus>(initialState.routeStatus);
   const [services, setServices] = useState<ServicesResponse | null>(null);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [serviceWakePhase, setServiceWakePhase] =
@@ -88,6 +94,12 @@ function App() {
   const autoScrollRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const conversationsRef = useRef(conversations);
+  const routeRequestRef = useRef(0);
+  const restoreRouteRef = useRef<() => void>(() => {});
+  const stopStreamRef = useRef<(status?: "stopped" | "complete") => void>(
+    () => {},
+  );
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeId),
@@ -147,7 +159,14 @@ function App() {
   useEffect(() => {
     void refreshServices();
     void hydrateServerHistory();
+    const initialRoute = routeFromPath(window.location.pathname);
+    if (initialRoute.type === "invalid") {
+      window.history.replaceState(null, "", "/");
+    } else if (initialRoute.type === "conversation") {
+      void resolveConversationRoute(initialRoute.conversationId);
+    }
     return () => {
+      routeRequestRef.current += 1;
       wakePollTokenRef.current += 1;
       if (wakePollTimerRef.current !== null) {
         window.clearTimeout(wakePollTimerRef.current);
@@ -160,6 +179,26 @@ function App() {
     autoScrollRef.current = true;
     scheduleScrollToLatest("auto");
   }, [activeId, scheduleScrollToLatest]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+    stopStreamRef.current = stopStream;
+  });
+
+  useEffect(() => {
+    restoreRouteRef.current = () => {
+      void restoreRoute(window.location.pathname);
+    };
+  });
+
+  useEffect(() => {
+    function handlePopState() {
+      restoreRouteRef.current();
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!activeMessageCount) {
@@ -245,22 +284,105 @@ function App() {
         return;
       }
 
-      const hydrated = await Promise.all(
+      const results = await Promise.allSettled(
         response.conversations.map(async (conversation) => {
           const messages = await fetchConversationMessages(conversation.id);
           return conversationFromServer(conversation, messages.messages);
         }),
       );
-
-      setConversations(hydrated);
-      setActiveId((current) =>
-        hydrated.some((conversation) => conversation.id === current)
-          ? current
-          : hydrated[0]?.id || "",
+      const hydrated = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
       );
+      setConversations((current) => mergeConversationLists(hydrated, current));
     } catch {
       // Persistence is optional in local/dev deployments. Browser storage remains
       // the fallback when the server has no DB configured yet.
+    }
+  }
+
+  async function resolveConversationRoute(conversationId: string) {
+    const requestId = ++routeRequestRef.current;
+    const localConversation = conversationsRef.current.find(
+      (conversation) => conversation.id === conversationId,
+    );
+
+    setActiveId(conversationId);
+    setRouteStatus(localConversation ? "ready" : "loading");
+
+    try {
+      const storedConversation = await fetchConversation(conversationId);
+      if (requestId !== routeRequestRef.current) return;
+
+      if (!storedConversation) {
+        if (!localConversation) {
+          setActiveId("");
+          setRouteStatus("not-found");
+        }
+        return;
+      }
+
+      const storedMessages = await fetchConversationMessages(conversationId);
+      if (requestId !== routeRequestRef.current) return;
+
+      const resolved = conversationFromServer(
+        storedConversation,
+        storedMessages.messages,
+      );
+      setConversations((current) => mergeConversationLists([resolved], current));
+      setActiveId(conversationId);
+      setRouteStatus("ready");
+    } catch {
+      if (requestId !== routeRequestRef.current || localConversation) return;
+      setActiveId("");
+      setRouteStatus("error");
+    }
+  }
+
+  async function restoreRoute(pathname: string) {
+    const route = routeFromPath(pathname);
+    stopStreamRef.current("stopped");
+    resetTransientConversationUi();
+
+    if (route.type === "invalid") {
+      window.history.replaceState(null, "", "/");
+      activateBlankRoute();
+      return;
+    }
+
+    if (route.type === "new") {
+      activateBlankRoute();
+      return;
+    }
+
+    await resolveConversationRoute(route.conversationId);
+  }
+
+  function activateBlankRoute() {
+    routeRequestRef.current += 1;
+    const current = conversationsRef.current;
+    const conversation =
+      current.find((item) => item.messages.length === 0) ?? createConversation();
+    if (!current.some((item) => item.id === conversation.id)) {
+      setConversations((items) => [conversation, ...items]);
+    }
+    setActiveId(conversation.id);
+    setRouteStatus("ready");
+  }
+
+  function resetTransientConversationUi() {
+    autoScrollRef.current = true;
+    setShowJumpToLatest(false);
+    setComposer("");
+    setAttachedFiles([]);
+    setFileError(null);
+    setRunState("idle");
+    setSidebarOpen(false);
+  }
+
+  function retryCurrentRoute() {
+    const route = routeFromPath(window.location.pathname);
+    if (route.type === "conversation") {
+      void resolveConversationRoute(route.conversationId);
     }
   }
 
@@ -279,16 +401,15 @@ function App() {
 
   function createNewChat() {
     stopStream("stopped");
+    routeRequestRef.current += 1;
     const conversation = createConversation();
-    autoScrollRef.current = true;
-    setShowJumpToLatest(false);
     setConversations((current) => [conversation, ...current]);
     setActiveId(conversation.id);
-    setComposer("");
-    setAttachedFiles([]);
-    setFileError(null);
-    setRunState("idle");
-    setSidebarOpen(false);
+    setRouteStatus("ready");
+    resetTransientConversationUi();
+    if (window.location.pathname !== "/") {
+      window.history.pushState(null, "", "/");
+    }
   }
 
   function selectConversation(conversationId: string) {
@@ -297,13 +418,11 @@ function App() {
       return;
     }
     stopStream("stopped");
-    autoScrollRef.current = true;
-    setShowJumpToLatest(false);
+    routeRequestRef.current += 1;
     setActiveId(conversationId);
-    setAttachedFiles([]);
-    setFileError(null);
-    setRunState("idle");
-    setSidebarOpen(false);
+    setRouteStatus("ready");
+    resetTransientConversationUi();
+    window.history.pushState(null, "", pathForConversation(conversationId));
   }
 
   async function renameConversationById(conversationId: string, title: string) {
@@ -347,8 +466,17 @@ function App() {
     const nextConversations = remaining.length ? remaining : [createConversation()];
     setConversations(nextConversations);
     if (deletedActiveConversation) {
-      setActiveId(nextConversations[0]?.id || "");
+      const nextConversation = nextConversations[0];
+      setActiveId(nextConversation?.id || "");
+      setRouteStatus("ready");
       setRunState("idle");
+      window.history.replaceState(
+        null,
+        "",
+        nextConversation?.messages.length
+          ? pathForConversation(nextConversation.id)
+          : "/",
+      );
     }
     setSidebarOpen(false);
 
@@ -400,6 +528,14 @@ function App() {
     setFileError(null);
     autoScrollRef.current = true;
     setShowJumpToLatest(false);
+
+    if (window.location.pathname === "/") {
+      window.history.replaceState(
+        null,
+        "",
+        pathForConversation(activeConversation.id),
+      );
+    }
 
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -1032,35 +1168,45 @@ function App() {
           </ServiceAlert>
         )}
 
-        <MessageList
-          conversation={activeConversation}
-          scrollRef={messageScrollRef}
-          onScroll={updateScrollPin}
-          showJumpToLatest={shouldShowJumpToLatest}
-          onJumpToLatest={jumpToLatest}
-          detailsOpen={detailsOpen}
-          setDetailsOpen={setDetailsOpen}
-          onCopyMessage={(message) => void copyMessage(message)}
-          onCopyMessageWithSources={(message) =>
-            void copyMessageWithSources(message)
-          }
-          onCopyMessageSources={(message) => void copyMessageSources(message)}
-          onRetryMessage={retryMessage}
-          isRunning={isRunning}
-          onPickPrompt={setComposer}
-        />
+        {routeStatus === "ready" ? (
+          <>
+            <MessageList
+              conversation={activeConversation}
+              scrollRef={messageScrollRef}
+              onScroll={updateScrollPin}
+              showJumpToLatest={shouldShowJumpToLatest}
+              onJumpToLatest={jumpToLatest}
+              detailsOpen={detailsOpen}
+              setDetailsOpen={setDetailsOpen}
+              onCopyMessage={(message) => void copyMessage(message)}
+              onCopyMessageWithSources={(message) =>
+                void copyMessageWithSources(message)
+              }
+              onCopyMessageSources={(message) => void copyMessageSources(message)}
+              onRetryMessage={retryMessage}
+              isRunning={isRunning}
+              onPickPrompt={setComposer}
+            />
 
-        <Composer
-          composer={composer}
-          isRunning={isRunning}
-          setComposer={setComposer}
-          onSubmit={submitMessage}
-          onStop={() => stopStream("stopped")}
-          attachedFiles={attachedFiles}
-          fileError={fileError}
-          onUploadFile={(file) => void handleUploadFile(file)}
-          onRemoveFile={(fileId) => void handleRemoveFile(fileId)}
-        />
+            <Composer
+              composer={composer}
+              isRunning={isRunning}
+              setComposer={setComposer}
+              onSubmit={submitMessage}
+              onStop={() => stopStream("stopped")}
+              attachedFiles={attachedFiles}
+              fileError={fileError}
+              onUploadFile={(file) => void handleUploadFile(file)}
+              onRemoveFile={(fileId) => void handleRemoveFile(fileId)}
+            />
+          </>
+        ) : (
+          <ConversationRouteState
+            state={routeStatus}
+            onNewChat={createNewChat}
+            onRetry={retryCurrentRoute}
+          />
+        )}
       </section>
     </main>
   );
@@ -1143,6 +1289,67 @@ function findLastServiceStatusIndex(parts: MessagePart[], labels: string[]) {
     }
   }
   return -1;
+}
+
+function createInitialConversationState(): {
+  conversations: Conversation[];
+  activeId: string;
+  routeStatus: ConversationRouteStatus;
+} {
+  const stored = loadConversations();
+  const route = routeFromPath(window.location.pathname);
+
+  if (route.type === "conversation") {
+    const isKnown = stored.some(
+      (conversation) => conversation.id === route.conversationId,
+    );
+    return {
+      conversations: stored,
+      activeId: route.conversationId,
+      routeStatus: isKnown ? "ready" : "loading",
+    };
+  }
+
+  const draft =
+    stored.find((conversation) => conversation.messages.length === 0) ??
+    createConversation();
+  const conversations = stored.some(
+    (conversation) => conversation.id === draft.id,
+  )
+    ? stored
+    : [draft, ...stored];
+
+  return {
+    conversations,
+    activeId: draft.id,
+    routeStatus: "ready",
+  };
+}
+
+function mergeConversationLists(
+  incoming: Conversation[],
+  current: Conversation[],
+): Conversation[] {
+  const currentById = new Map(
+    current.map((conversation) => [conversation.id, conversation]),
+  );
+  const merged = incoming.map((conversation) => {
+    const local = currentById.get(conversation.id);
+    currentById.delete(conversation.id);
+    if (!local) return conversation;
+
+    const localUpdatedAt = Date.parse(local.updatedAt);
+    const serverUpdatedAt = Date.parse(conversation.updatedAt);
+    const localIsNewer =
+      Number.isFinite(localUpdatedAt) &&
+      (!Number.isFinite(serverUpdatedAt) || localUpdatedAt > serverUpdatedAt);
+    const localHasMoreMessages =
+      localUpdatedAt === serverUpdatedAt &&
+      local.messages.length > conversation.messages.length;
+    return localIsNewer || localHasMoreMessages ? local : conversation;
+  });
+
+  return [...merged, ...currentById.values()];
 }
 
 function conversationFromServer(
