@@ -29,6 +29,8 @@ class ServiceStatus(BaseModel):
 class ServicesResponse(BaseModel):
     model: ServiceStatus
     search: ServiceStatus
+    poll_interval_seconds: float | None = None
+    wake_timeout_seconds: float | None = None
 
     @property
     def ok(self) -> bool:

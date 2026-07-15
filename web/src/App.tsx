@@ -55,6 +55,10 @@ import type {
 const MAX_HISTORY_MESSAGES = 24;
 const MAX_HISTORY_CHARS = 24_000;
 const SCROLL_BOTTOM_THRESHOLD = 72;
+const DEFAULT_WAKE_POLL_INTERVAL_MS = 3_000;
+const DEFAULT_WAKE_TIMEOUT_MS = 180_000;
+
+type ServiceWakePhase = "checking" | "waking" | "ready" | "timeout";
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -64,6 +68,10 @@ function App() {
   const [activeId, setActiveId] = useState(() => conversations[0]?.id ?? "");
   const [services, setServices] = useState<ServicesResponse | null>(null);
   const [serviceError, setServiceError] = useState<string | null>(null);
+  const [serviceWakePhase, setServiceWakePhase] =
+    useState<ServiceWakePhase>("checking");
+  const wakePollTimerRef = useRef<number | null>(null);
+  const wakePollTokenRef = useRef(0);
   const [composer, setComposer] = useState("");
   const [runState, setRunState] = useState<RunState>("idle");
   const [modelProvider, setModelProvider] =
@@ -137,6 +145,13 @@ function App() {
   useEffect(() => {
     void refreshServices();
     void hydrateServerHistory();
+    return () => {
+      wakePollTokenRef.current += 1;
+      if (wakePollTimerRef.current !== null) {
+        window.clearTimeout(wakePollTimerRef.current);
+        wakePollTimerRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -165,17 +180,59 @@ function App() {
   );
 
   async function refreshServices() {
-    try {
-      setServiceError(null);
-      const nextServices = await fetchServices();
-      setServices(nextServices);
-      setModelProvider((current) =>
-        current?.source === "event" ? current : providerFromServices(nextServices),
-      );
-    } catch (error) {
-      setServiceError(
-        error instanceof Error ? error.message : "Status check failed.",
-      );
+    wakePollTokenRef.current += 1;
+    const token = wakePollTokenRef.current;
+    if (wakePollTimerRef.current !== null) {
+      window.clearTimeout(wakePollTimerRef.current);
+      wakePollTimerRef.current = null;
+    }
+
+    setServiceError(null);
+    setServiceWakePhase("checking");
+
+    let intervalMs = DEFAULT_WAKE_POLL_INTERVAL_MS;
+    let deadline = Date.now() + DEFAULT_WAKE_TIMEOUT_MS;
+
+    while (wakePollTokenRef.current === token) {
+      try {
+        const nextServices = await fetchServices();
+        if (wakePollTokenRef.current !== token) return;
+
+        setServices(nextServices);
+        setModelProvider((current) =>
+          current?.source === "event" ? current : providerFromServices(nextServices),
+        );
+        if (nextServices.poll_interval_seconds) {
+          intervalMs = nextServices.poll_interval_seconds * 1000;
+        }
+        if (nextServices.wake_timeout_seconds) {
+          deadline = Date.now() + nextServices.wake_timeout_seconds * 1000;
+        }
+
+        if (nextServices.model.ok && nextServices.search.ok) {
+          setServiceWakePhase("ready");
+          return;
+        }
+        setServiceWakePhase("waking");
+      } catch {
+        if (wakePollTokenRef.current !== token) return;
+        setServiceWakePhase("waking");
+      }
+
+      if (Date.now() >= deadline) {
+        setServiceWakePhase("timeout");
+        setServiceError(
+          "Aristotle's services are taking longer than expected to wake up.",
+        );
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        wakePollTimerRef.current = window.setTimeout(() => {
+          wakePollTimerRef.current = null;
+          resolve();
+        }, intervalMs);
+      });
     }
   }
 
@@ -947,11 +1004,21 @@ function App() {
           runState={runState}
           services={services}
           modelProvider={modelProvider}
+          isWakingServices={
+            serviceWakePhase === "checking" || serviceWakePhase === "waking"
+          }
           onOpenSidebar={() => setSidebarOpen(true)}
           onNewChat={createNewChat}
         />
 
-        {serviceError && <ServiceAlert>{serviceError}</ServiceAlert>}
+        {serviceError && (
+          <ServiceAlert
+            onRetry={() => void refreshServices()}
+            retrying={serviceWakePhase === "checking"}
+          >
+            {serviceError}
+          </ServiceAlert>
+        )}
 
         <MessageList
           conversation={activeConversation}

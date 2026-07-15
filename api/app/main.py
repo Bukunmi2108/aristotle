@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
@@ -85,9 +86,14 @@ async def healthz() -> HealthResponse:
 async def services() -> ServicesResponse:
     model_client: ModelClient = app.state.model_client
     search_client: SearchClient = app.state.search_client
+    model_status, search_status = await asyncio.gather(
+        model_client.status(), search_client.status()
+    )
     return ServicesResponse(
-        model=await model_client.status(),
-        search=await search_client.status(),
+        model=model_status,
+        search=search_status,
+        poll_interval_seconds=SETTINGS.wake_poll_interval_seconds,
+        wake_timeout_seconds=SETTINGS.wake_timeout_seconds,
     )
 
 

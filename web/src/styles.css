@@ -667,6 +667,10 @@ input:focus-visible {
 
 .service-alert {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin: 12px clamp(12px, 3.2vw, 42px) 0;
   border: 1px solid color-mix(in srgb, var(--danger) 22%, white);
   border-radius: var(--radius);
@@ -674,6 +678,23 @@ input:focus-visible {
   color: var(--danger-strong);
   padding: 10px 12px;
   font-size: 14px;
+}
+
+.service-alert__retry {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, white);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--danger-strong);
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.service-alert__retry:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .message-scroll-shell {

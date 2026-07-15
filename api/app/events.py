@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
@@ -64,18 +65,20 @@ class EventSender:
         self._run_id = run_id
         self._message_id = message_id
         self._store = store
+        self._lock = asyncio.Lock()
 
     async def send(self, event_type: EventType, **kwargs: Any) -> None:
-        self._sequence += 1
-        event = Event(
-            type=event_type,
-            sequence=self._sequence,
-            conversation_id=self._conversation_id,
-            run_id=kwargs.pop("run_id", self._run_id),
-            message_id=kwargs.pop("message_id", self._message_id),
-            **kwargs,
-        )
-        payload = event.model_dump(exclude_none=True)
-        if self._store is not None:
-            await self._store.append_event(payload)
-        await self._send_json(payload)
+        async with self._lock:
+            self._sequence += 1
+            event = Event(
+                type=event_type,
+                sequence=self._sequence,
+                conversation_id=self._conversation_id,
+                run_id=kwargs.pop("run_id", self._run_id),
+                message_id=kwargs.pop("message_id", self._message_id),
+                **kwargs,
+            )
+            payload = event.model_dump(exclude_none=True)
+            if self._store is not None:
+                await self._store.append_event(payload)
+            await self._send_json(payload)

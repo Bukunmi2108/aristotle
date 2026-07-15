@@ -57,6 +57,7 @@ type AppHeaderProps = {
   runState: RunState;
   services: ServicesResponse | null;
   modelProvider: ModelProviderState | null;
+  isWakingServices?: boolean;
   onOpenSidebar: () => void;
   onNewChat: () => void;
 };
@@ -65,6 +66,7 @@ export function AppHeader({
   runState,
   services,
   modelProvider,
+  isWakingServices,
   onOpenSidebar,
   onNewChat,
 }: AppHeaderProps) {
@@ -86,7 +88,11 @@ export function AppHeader({
 
       <div className="app-header__actions">
         <div className="status-cluster">
-          <HealthBeat runState={runState} services={services} />
+          <HealthBeat
+            runState={runState}
+            services={services}
+            isWakingServices={isWakingServices}
+          />
           <ModelProviderTag provider={modelProvider} />
         </div>
         <button
@@ -381,10 +387,26 @@ function ModelProviderTag({
 
 type ServiceAlertProps = {
   children: string;
+  onRetry?: () => void;
+  retrying?: boolean;
 };
 
-export function ServiceAlert({ children }: ServiceAlertProps) {
-  return <div className="service-alert">{children}</div>;
+export function ServiceAlert({ children, onRetry, retrying }: ServiceAlertProps) {
+  return (
+    <div className="service-alert">
+      <span>{children}</span>
+      {onRetry && (
+        <button
+          type="button"
+          className="service-alert__retry"
+          onClick={onRetry}
+          disabled={retrying}
+        >
+          {retrying ? "Retrying…" : "Retry"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 type MessageListProps = {
@@ -574,11 +596,13 @@ export function Composer({
 function HealthBeat({
   runState,
   services,
+  isWakingServices,
 }: {
   runState: RunState;
   services: ServicesResponse | null;
+  isWakingServices?: boolean;
 }) {
-  const state = healthState(runState, services);
+  const state = healthState(runState, services, isWakingServices);
 
   return (
     <div className={cx("health-beat", `health-beat--${state.tone}`)} title={state.detail}>
@@ -1543,8 +1567,9 @@ function providerLabel(provider: ModelProviderState): string {
 function healthState(
   runState: RunState,
   services: ServicesResponse | null,
+  isWakingServices?: boolean,
 ): { label: string; tone: "ready" | "busy" | "warn"; detail: string } {
-  if (runState === "connecting" || runState === "warming") {
+  if (runState === "connecting" || runState === "warming" || isWakingServices) {
     return {
       label: "Waking",
       tone: "busy",

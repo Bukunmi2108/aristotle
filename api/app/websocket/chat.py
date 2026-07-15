@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -86,11 +87,19 @@ async def chat_websocket(websocket: WebSocket) -> None:
 
         await events.send("session.started")
 
-        await wait_for_service_ready(
-            service="model",
-            is_ready=model_client.is_ready,
-            settings=SETTINGS,
-            events=events,
+        await asyncio.gather(
+            wait_for_service_ready(
+                service="model",
+                is_ready=model_client.is_ready,
+                settings=SETTINGS,
+                events=events,
+            ),
+            wait_for_service_ready(
+                service="search",
+                is_ready=search_client.is_ready,
+                settings=SETTINGS,
+                events=events,
+            ),
         )
 
         agent_runtime = AristotleAgentRuntime(

@@ -12,6 +12,8 @@ export type ServiceStatus = {
 export type ServicesResponse = {
   model: ServiceStatus;
   search: ServiceStatus;
+  poll_interval_seconds?: number | null;
+  wake_timeout_seconds?: number | null;
 };
 
 export type StoredConversation = {
