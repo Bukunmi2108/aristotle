@@ -1,0 +1,31 @@
+name: Deploy Aristotle Search to Hugging Face
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "search/**"
+      - ".github/workflows/deploy-search.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aristotle-search-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: Bukunmi2108/aristotle-search
+          hf_token: ${{ secrets.HF_TOKEN }}
+          repo_type: space
+          space_sdk: docker
+          subdirectory: search
