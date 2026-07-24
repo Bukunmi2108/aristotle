@@ -202,9 +202,10 @@ The services are designed to deploy independently:
 - `web/` builds to a static Vite bundle and includes a Vercel SPA rewrite.
 - `api/`, `search/`, and `model/` each contain a Dockerfile suitable for any
   container host.
-- `search/` deploys to the Workspace VPS behind the shared Caddy gateway with
-  Sablier scale-to-zero (see `search/deploy/`); `api/` and `model/` currently
-  run as Hugging Face Docker Spaces.
+- `api/` and `search/` deploy to the Workspace VPS behind the shared Caddy
+  gateway with Sablier scale-to-zero (see `api/deploy/` and `search/deploy/`),
+  sharing one Sablier group so the API's wake also starts search; `model/` runs
+  as a Hugging Face Docker Space.
 - The API can use an external PostgreSQL database. When `DATABASE_URL` is absent
   from the API image, its startup script creates an internal ephemeral database.
 - The frontend should always call the API rather than connecting directly to

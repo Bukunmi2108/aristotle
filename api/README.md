@@ -1,20 +1,14 @@
----
-title: Aristotle API
-emoji: 🧠
-colorFrom: yellow
-colorTo: red
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Aristotle Agent API
 
 Agent orchestration layer for Aristotle.
 
-The frontend should talk only to this API. The API wakes the model/search Spaces,
-runs the Pydantic AI agent, exposes tool activity, and streams reasoning/output
-events back to the client.
+The frontend should talk only to this API. The API wakes the model provider and
+the co-located search service, runs the Pydantic AI agent, exposes tool activity,
+and streams reasoning/output events back to the client.
+
+Deployed to the Workspace VPS as `workspace-aristotle-api` behind the shared Caddy
+gateway with Sablier scale-to-zero (see [`deploy/`](deploy/)); it uses the shared
+PostgreSQL service and reaches the search service over the internal network.
 
 ## Services
 
