@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Server-side exact-revision deployment for aristotle-search.
+#
+# Installed once at /opt/workspace/apps/aristotle-search/deploy on the VPS
+# (it must pre-exist, since it is what clones the checkout). CI invokes it over
+# SSH with the exact commit to deploy:
+#
+#     /opt/workspace/apps/aristotle-search/deploy <git-sha>
+#
+# It never overwrites the application .env and never touches shared infra
+# (Caddy, Sablier, Postgres, networks).
+set -euo pipefail
+
+APP_DIR="/opt/workspace/apps/aristotle-search"
+SOURCE_DIR="$APP_DIR/source"
+REPO_URL="https://github.com/Bukunmi2108/aristotle.git"
+COMPOSE_FILE="$SOURCE_DIR/search/deploy/compose.production.yaml"
+CONTAINER="workspace-aristotle-search"
+
+SHA="${1:?usage: deploy <git-sha>}"
+
+# 1-2. Clone only when absent, then fetch from the expected origin and check out
+# the exact revision in detached mode.
+if [ ! -d "$SOURCE_DIR/.git" ]; then
+  git clone "$REPO_URL" "$SOURCE_DIR"
+fi
+git -C "$SOURCE_DIR" remote set-url origin "$REPO_URL"
+git -C "$SOURCE_DIR" fetch origin "$SHA"
+git -C "$SOURCE_DIR" checkout --detach "$SHA"
+
+# 3. Build and recreate only this application.
+cd "$APP_DIR"
+APP_SOURCE_ROOT="./source" \
+APP_ENV_FILE="./.env" \
+APP_IMAGE_TAG="$SHA" \
+  docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" up -d --build backend
+
+# 4. Wait for the container to become healthy. Fail fast if it exits/dies on
+# boot (otherwise a crashed container is indistinguishable from a slow one and
+# burns the whole timeout), and fail loudly if it never reports healthy.
+HEALTH_ATTEMPTS=30
+echo "Waiting for $CONTAINER to become healthy..."
+for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
+  health="$(docker inspect --format '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
+  if [ "$health" = "healthy" ]; then
+    echo "$CONTAINER is healthy"
+    break
+  fi
+  run_state="$(docker inspect --format '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
+  if [ "$run_state" = "exited" ] || [ "$run_state" = "dead" ]; then
+    exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$CONTAINER" 2>/dev/null || echo '?')"
+    echo "ERROR: $CONTAINER $run_state before becoming healthy (exit code $exit_code)" >&2
+    docker logs --tail 100 "$CONTAINER" >&2 || true
+    exit 1
+  fi
+  if [ "$attempt" -eq "$HEALTH_ATTEMPTS" ]; then
+    echo "ERROR: $CONTAINER did not become healthy in time (status: $run_state, health: $health)" >&2
+    docker logs --tail 100 "$CONTAINER" >&2 || true
+    exit 1
+  fi
+  sleep 5
+done
+
+# 5. Conservative cleanup of dangling images only.
+docker image prune -f >/dev/null 2>&1 || true
+
+echo "Deployed aristotle-search at $SHA"
