@@ -10,8 +10,8 @@ import type {
   StoredMessagesResponse,
 } from "./types";
 
-const DEFAULT_HTTP_BASE_URL = "https://bukunmi2108-aristotle-api.hf.space";
-const DEFAULT_WS_BASE_URL = "wss://bukunmi2108-aristotle-api.hf.space";
+const DEFAULT_HTTP_BASE_URL = "https://aristotle-api.duckdns.org";
+const DEFAULT_WS_BASE_URL = "wss://aristotle-api.duckdns.org";
 
 export const agentHttpBaseUrl = trimTrailingSlash(
   import.meta.env.VITE_AGENT_HTTP_BASE_URL || DEFAULT_HTTP_BASE_URL,

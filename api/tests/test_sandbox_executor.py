@@ -50,6 +50,14 @@ class FakeFileStore:
         self.artifacts.append(kwargs)
 
 
+@unittest.skipIf(
+    os.getenv("CI") == "true",
+    "Sandbox executor integration tests spawn real subprocesses under rlimits/"
+    "seccomp and are host-sensitive (and can pass for the wrong reason on a "
+    "runner without seccomp or egress); they run locally or on the VPS, not on "
+    "shared CI runners. Sandbox behavior is verified manually as a post-deploy "
+    "acceptance step, not automatically in CI.",
+)
 class SandboxExecutorTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.workspace_root = tempfile.mkdtemp(prefix="aristotle-sandbox-test-")

@@ -98,7 +98,15 @@ start_internal_postgres() {
 }
 
 if [ -z "${DATABASE_URL:-}" ]; then
-    start_internal_postgres
+    if [ "${ALLOW_EPHEMERAL_DB:-false}" = "true" ]; then
+        start_internal_postgres
+    else
+        echo "ERROR: DATABASE_URL is not set." >&2
+        echo "Refusing to start with an in-container ephemeral database whose data is" >&2
+        echo "lost on every restart/redeploy. Set DATABASE_URL to a durable database," >&2
+        echo "or set ALLOW_EPHEMERAL_DB=true for an explicit throwaway local database." >&2
+        exit 1
+    fi
 fi
 
 trap shutdown INT TERM

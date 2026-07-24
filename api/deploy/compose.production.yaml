@@ -1,0 +1,61 @@
+# Production Compose for the Aristotle agent API on the Workspace VPS.
+# Derived from workspace-infra/templates/compose.production.yaml.
+# Run from /opt/workspace/apps/aristotle-api with APP_SOURCE_ROOT, APP_ENV_FILE,
+# and APP_IMAGE_TAG supplied by the server-side deploy script.
+name: aristotle-api
+
+services:
+  backend:
+    build:
+      context: ${APP_SOURCE_ROOT:-./source}/api
+    image: aristotle-api-backend:${APP_IMAGE_TAG:-local}
+    container_name: workspace-aristotle-api
+    env_file:
+      - ${APP_ENV_FILE:-./.env}
+    expose:
+      - "7860"
+    networks:
+      - gateway   # Caddy + reaching workspace-aristotle-search
+      - data      # shared workspace-postgres
+    volumes:
+      # Uploads and sandbox artifacts live on disk (metadata is in Postgres);
+      # persist them so download links survive restarts and Sablier sleep.
+      - aristotle_storage:/app/storage
+    labels:
+      sablier.enable: "true"
+      # Join search's existing Sablier group so the API's route wakes both
+      # containers; the API then reaches search over the internal network
+      # (ARISTOTLE_SEARCH_BASE_URL=http://workspace-aristotle-search:7860)
+      # without a public hop. The group is named for search (it predates the
+      # API) — the name is cosmetic; what matters is that both share it.
+      sablier.group: aristotle-search
+    # /healthz is process liveness (returns ok unconditionally). Model/search
+    # readiness is enforced per-request by the agent's wake loop, and /readyz
+    # makes external calls — so it is kept out of the Docker health check.
+    # The API image has no curl, so probe with the base image's python3 + stdlib.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/healthz').read()
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 2g
+    cpus: "2.0"
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  gateway:
+    name: workspace_gateway
+    external: true
+  data:
+    name: workspace_data
+    external: true
+
+volumes:
+  aristotle_storage:
+    name: aristotle_storage
