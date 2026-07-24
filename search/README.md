@@ -1,18 +1,10 @@
----
-title: Aristotle Search
-emoji: 🔎
-colorFrom: blue
-colorTo: green
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Aristotle Search Service
 
 SearXNG-backed search tool service for Aristotle.
 
-This Space runs a small FastAPI wrapper in front of an internal SearXNG server. Aristotle's future agent runtime should call the wrapper API, not raw SearXNG, so the agent receives a stable search schema.
+This service runs a small FastAPI wrapper in front of an internal SearXNG server. Aristotle's agent runtime calls the wrapper API, not raw SearXNG, so the agent receives a stable search schema.
+
+It is deployed to the Workspace VPS as `workspace-aristotle-search`, behind the shared Caddy gateway with Sablier scale-to-zero. See [`deploy/`](deploy/) and the platform guide in `workspace-infra`.
 
 ## Service Shape
 
@@ -31,7 +23,7 @@ internal :8080
 ## Hosted URL
 
 ```text
-https://bukunmi2108-aristotle-search.hf.space
+https://aristotle-search.duckdns.org
 ```
 
 ## Files
@@ -66,7 +58,7 @@ SEARCH_TIMEOUT_SECONDS=15
 SEARXNG_TIMEOUT_SECONDS=12
 ```
 
-The local `.env` file is for development only and should not be uploaded.
+The local `.env` file is for development only and should not be committed.
 
 ## Local Build
 
@@ -185,44 +177,32 @@ use_default_settings:
 
 ## Deploy
 
-Create the Space once:
+Deployment is automated. On a push to `main` that touches `search/**`, the
+[`deploy-search`](../.github/workflows/deploy-search.yml) workflow runs the test
+suite, then SSHes to the VPS and invokes the server-side deploy script with the
+exact commit:
 
-```sh
-hf repo create Bukunmi2108/aristotle-search \
-  --type space \
-  --space-sdk docker \
-  --flavor cpu-basic \
-  --exist-ok
+```text
+/opt/workspace/apps/aristotle-search/deploy <git-sha>
 ```
 
-Upload the search folder as the Space root:
+That script checks out the exact revision, rebuilds only the search container,
+and waits for its health check. The production Compose file and deploy script
+live in [`deploy/`](deploy/); the gateway route lives in `workspace-infra` at
+`gateway/sites/aristotle-search.caddy`.
 
-```sh
-hf upload Bukunmi2108/aristotle-search search . \
-  --repo-type space \
-  --include 'Dockerfile' \
-  --include 'README.md' \
-  --include '.dockerignore' \
-  --include '.env.example' \
-  --include 'pyproject.toml' \
-  --include 'uv.lock' \
-  --include 'start.sh' \
-  --include 'app/*.py' \
-  --include 'searxng/**' \
-  --commit-message 'Deploy Aristotle search service'
-```
-
-Do not upload `.env`, `.venv`, or `__pycache__`.
+One-time platform setup (VPS app directory, DuckDNS host, gateway route, GitHub
+`production` secrets) follows the `workspace-infra` onboarding workflow.
 
 ## Hosted Checks
 
 ```sh
-curl https://bukunmi2108-aristotle-search.hf.space/healthz
-curl https://bukunmi2108-aristotle-search.hf.space/readyz
+curl https://aristotle-search.duckdns.org/healthz
+curl https://aristotle-search.duckdns.org/readyz
 ```
 
 ```sh
-curl -X POST https://bukunmi2108-aristotle-search.hf.space/search \
+curl -X POST https://aristotle-search.duckdns.org/search \
   -H "Content-Type: application/json" \
   -d '{"query":"SearXNG JSON API","max_results":5}'
 ```

@@ -76,7 +76,7 @@ class ApiSettings:
             model_fallback_enabled=_bool_env("MODEL_FALLBACK_ENABLED", True),
             search_base_url=os.getenv(
                 "ARISTOTLE_SEARCH_BASE_URL",
-                "https://bukunmi2108-aristotle-search.hf.space",
+                "https://aristotle-search.duckdns.org",
             ).rstrip("/"),
             wake_timeout_seconds=float(os.getenv("WAKE_TIMEOUT_SECONDS", "180")),
             wake_poll_interval_seconds=float(

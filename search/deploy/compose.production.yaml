@@ -1,0 +1,44 @@
+# Production Compose for the Aristotle search service on the Workspace VPS.
+# Derived from workspace-infra/templates/compose.production.yaml.
+# Run from /opt/workspace/apps/aristotle-search with APP_SOURCE_ROOT, APP_ENV_FILE,
+# and APP_IMAGE_TAG supplied by the server-side deploy script.
+name: aristotle-search
+
+services:
+  backend:
+    build:
+      context: ${APP_SOURCE_ROOT:-./source}/search
+    image: aristotle-search-backend:${APP_IMAGE_TAG:-local}
+    container_name: workspace-aristotle-search
+    env_file:
+      - ${APP_ENV_FILE:-./.env}
+    expose:
+      - "7860"
+    networks:
+      - gateway
+    labels:
+      sablier.enable: "true"
+      sablier.group: aristotle-search
+    # Liveness check: /healthz returns ok unconditionally. start.sh waits up to
+    # ~60s for SearXNG before starting uvicorn, so in the normal path a healthy
+    # container also has SearXNG up — but that is NOT guaranteed (start.sh falls
+    # through and starts uvicorn anyway after the bound). True search readiness
+    # is /readyz, which runs a live SearXNG query; it is deliberately kept out of
+    # the Docker health check so the check does not hit external engines every
+    # interval. The calling API verifies /readyz via its wake loop before sending
+    # real traffic. curl is present in the image (installed in search/Dockerfile).
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7860/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 1g
+    cpus: "1.0"
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  gateway:
+    name: workspace_gateway
+    external: true
