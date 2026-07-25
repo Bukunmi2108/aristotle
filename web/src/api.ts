@@ -1,6 +1,7 @@
 import type {
   ClientUserMessage,
   FileUploadResponse,
+  PresentedArtifact,
   ServerEvent,
   ServiceStatus,
   ServicesResponse,
@@ -21,8 +22,54 @@ export const agentWsBaseUrl = trimTrailingSlash(
   import.meta.env.VITE_AGENT_WS_BASE_URL || DEFAULT_WS_BASE_URL,
 );
 
-export function artifactDownloadUrl(artifactId: string): string {
-  return `${agentHttpBaseUrl}/artifacts/${encodeURIComponent(artifactId)}`;
+// Separate origin for HTML previews (defence-in-depth). Falls back to the API
+// origin, still safe because the preview iframe omits allow-same-origin.
+export const previewBaseUrl = trimTrailingSlash(
+  import.meta.env.VITE_PREVIEW_ORIGIN || agentHttpBaseUrl,
+);
+
+export function workspaceFileUrl(
+  conversationId: string,
+  path: string,
+  options: { download?: boolean; preview?: boolean } = {},
+): string {
+  const params = new URLSearchParams({ path });
+  if (options.download) {
+    params.set("download", "1");
+  }
+  const base = options.preview ? previewBaseUrl : agentHttpBaseUrl;
+  return `${base}/workspace/${encodeURIComponent(
+    conversationId,
+  )}/file?${params.toString()}`;
+}
+
+export async function fetchPresentations(
+  conversationId: string,
+): Promise<PresentedArtifact[]> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/conversations/${encodeURIComponent(
+      conversationId,
+    )}/presentations`,
+  );
+  if (!response.ok) {
+    throw new Error(`Presentations failed with ${response.status}`);
+  }
+  const payload = (await response.json()) as {
+    presentations: Array<{
+      id: string;
+      path: string;
+      mime_type: string;
+      title?: string | null;
+      version: number;
+    }>;
+  };
+  return payload.presentations.map((item) => ({
+    id: item.id,
+    path: item.path,
+    mimeType: item.mime_type,
+    title: item.title,
+    version: item.version,
+  }));
 }
 
 export async function fetchServices(): Promise<ServicesResponse> {

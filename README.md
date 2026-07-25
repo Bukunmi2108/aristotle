@@ -46,7 +46,8 @@ configured to use hosted model providers by default.
 | Directory | Responsibility | Documentation |
 | --- | --- | --- |
 | `web/` | React 19, TypeScript, Vite, and Tailwind chat client | [Web guide](web/README.md) |
-| `api/` | FastAPI, Pydantic AI, WebSocket streaming, persistence, documents, and sandboxing | [API guide](api/README.md) |
+| `api/` | FastAPI, Pydantic AI, WebSocket streaming, persistence, documents, and workspace orchestration | [API guide](api/README.md) |
+| `sandbox/` | Private code-execution + workspace service (folders, run/build files, presented artifacts) | [Sandbox guide](sandbox/README.md) |
 | `search/` | FastAPI wrapper around an internal SearXNG process | [Search guide](search/README.md) |
 | `model/` | Dockerized llama.cpp fallback model endpoint | [Model guide](model/README.md) |
 | `Makefile` | Local multi-service development orchestration | Run `make help` |

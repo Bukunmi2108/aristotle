@@ -17,9 +17,10 @@ services:
     networks:
       - gateway   # Caddy + reaching workspace-aristotle-search
       - data      # shared workspace-postgres
+      - internal  # private link to the sandbox service
     volumes:
-      # Uploads and sandbox artifacts live on disk (metadata is in Postgres);
-      # persist them so download links survive restarts and Sablier sleep.
+      # Uploads live on disk (metadata is in Postgres); persist them so
+      # download links survive restarts and Sablier sleep.
       - aristotle_storage:/app/storage
     labels:
       sablier.enable: "true"
@@ -48,6 +49,47 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # The only component that runs untrusted, agent-written code. It joins ONLY
+  # the private internal network (no public edge, no Postgres, no other project),
+  # so a breakout is boxed into a resource-capped container with nothing valuable
+  # reachable. Holds no secrets beyond the shared auth token.
+  sandbox:
+    build:
+      context: ${APP_SOURCE_ROOT:-./source}/sandbox
+    image: aristotle-sandbox:${APP_IMAGE_TAG:-local}
+    container_name: workspace-aristotle-sandbox
+    environment:
+      # Only the shared token is injected — deliberately not the API's env_file,
+      # so DB and model credentials never reach the code-execution container.
+      SANDBOX_AUTH_TOKEN: ${SANDBOX_AUTH_TOKEN:-}
+      SANDBOX_WORKSPACE_ROOT: /workspace
+    networks:
+      - internal
+    volumes:
+      - aristotle_workspace_data:/workspace
+    tmpfs:
+      - /tmp
+    labels:
+      sablier.enable: "true"
+      sablier.group: aristotle-search
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/healthz').read()
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 2g
+    cpus: "1.5"
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
 networks:
   gateway:
     name: workspace_gateway
@@ -55,7 +97,14 @@ networks:
   data:
     name: workspace_data
     external: true
+  # App-private link between the API and the sandbox. internal:true = no route
+  # to the internet or other project networks.
+  internal:
+    name: aristotle_internal
+    internal: true
 
 volumes:
   aristotle_storage:
     name: aristotle_storage
+  aristotle_workspace_data:
+    name: aristotle_workspace_data

@@ -28,38 +28,44 @@ git -C "$SOURCE_DIR" remote set-url origin "$REPO_URL"
 git -C "$SOURCE_DIR" fetch origin "$SHA"
 git -C "$SOURCE_DIR" checkout --detach "$SHA"
 
-# 3. Build and recreate only this application.
+# 3. Build and recreate this application (API + its private sandbox service).
 cd "$APP_DIR"
 APP_SOURCE_ROOT="./source" \
 APP_ENV_FILE="./.env" \
 APP_IMAGE_TAG="$SHA" \
-  docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" up -d --build backend
+  docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" up -d --build backend sandbox
 
-# 4. Wait for the container to become healthy. Fail fast if it exits/dies on
+# 4. Wait for each container to become healthy. Fail fast if one exits/dies on
 # boot (otherwise a crashed container is indistinguishable from a slow one and
 # burns the whole timeout), and fail loudly if it never reports healthy.
-HEALTH_ATTEMPTS=30
-echo "Waiting for $CONTAINER to become healthy..."
-for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
-  health="$(docker inspect --format '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
-  if [ "$health" = "healthy" ]; then
-    echo "$CONTAINER is healthy"
-    break
-  fi
-  run_state="$(docker inspect --format '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"
-  if [ "$run_state" = "exited" ] || [ "$run_state" = "dead" ]; then
-    exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$CONTAINER" 2>/dev/null || echo '?')"
-    echo "ERROR: $CONTAINER $run_state before becoming healthy (exit code $exit_code)" >&2
-    docker logs --tail 100 "$CONTAINER" >&2 || true
-    exit 1
-  fi
-  if [ "$attempt" -eq "$HEALTH_ATTEMPTS" ]; then
-    echo "ERROR: $CONTAINER did not become healthy in time (status: $run_state, health: $health)" >&2
-    docker logs --tail 100 "$CONTAINER" >&2 || true
-    exit 1
-  fi
-  sleep 5
-done
+wait_healthy() {
+  local container="$1"
+  local attempts=30
+  echo "Waiting for $container to become healthy..."
+  for attempt in $(seq 1 "$attempts"); do
+    health="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo missing)"
+    if [ "$health" = "healthy" ]; then
+      echo "$container is healthy"
+      return 0
+    fi
+    run_state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo missing)"
+    if [ "$run_state" = "exited" ] || [ "$run_state" = "dead" ]; then
+      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container" 2>/dev/null || echo '?')"
+      echo "ERROR: $container $run_state before becoming healthy (exit code $exit_code)" >&2
+      docker logs --tail 100 "$container" >&2 || true
+      return 1
+    fi
+    if [ "$attempt" -eq "$attempts" ]; then
+      echo "ERROR: $container did not become healthy in time (status: $run_state, health: $health)" >&2
+      docker logs --tail 100 "$container" >&2 || true
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+wait_healthy "$CONTAINER"
+wait_healthy "workspace-aristotle-sandbox"
 
 # 5. Conservative cleanup of dangling images only.
 docker image prune -f >/dev/null 2>&1 || true

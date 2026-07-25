@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "api/**"
+      - "sandbox/**"
       - ".github/workflows/deploy-api.yml"
   workflow_dispatch:
 
@@ -21,16 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install libseccomp headers (pyseccomp build dep)
-        run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # GitHub sets CI=true, which skips the host-sensitive sandbox-executor
-      # integration tests (they are validated live on the VPS instead).
       - name: Run API tests
         working-directory: api
+        run: uv run --frozen python -m unittest discover -s tests
+      - name: Run sandbox tests
+        working-directory: sandbox
         run: uv run --frozen python -m unittest discover -s tests
 
   deploy:

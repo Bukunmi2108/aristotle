@@ -1,0 +1,13 @@
+[project]
+name = "aristotle-sandbox"
+version = "0.1.0"
+description = "Private code-execution and workspace service for Aristotle"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.138.1",
+    "pydantic>=2.13.4",
+    "uvicorn>=0.49.0",
+]
+
+[tool.uv]
+package = false

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
@@ -7,7 +8,7 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from app.config import SERVICE_NAME, SETTINGS
 from app.db import PersistenceStore, close_store, create_store
@@ -27,9 +28,12 @@ from app.models import (
     ServicesResponse,
 )
 from app.services.model import ModelClient
-from app.services.sandbox import SandboxExecutor
+from app.services.sandbox_client import SandboxClient, SandboxError
 from app.services.search import SearchClient
 from app.websocket.chat import router as chat_router
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -38,10 +42,8 @@ async def lifespan(app: FastAPI):
     store = await create_store(SETTINGS)
     app.state.model_client = ModelClient(http=http, settings=SETTINGS)
     app.state.search_client = SearchClient(http=http, settings=SETTINGS)
-    app.state.sandbox_executor = (
-        SandboxExecutor(settings=SETTINGS, document_store=store)
-        if SETTINGS.sandbox_enabled
-        else None
+    app.state.sandbox_client = (
+        SandboxClient(http=http, settings=SETTINGS) if SETTINGS.workspace_enabled else None
     )
     app.state.store = store
     try:
@@ -149,6 +151,9 @@ async def delete_conversation(conversation_id: str) -> dict:
     deleted = await store.delete_conversation(conversation_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found.")
+    sandbox_client = getattr(app.state, "sandbox_client", None)
+    if sandbox_client is not None:
+        await sandbox_client.destroy(conversation_id)
     return {"ok": True}
 
 
@@ -156,6 +161,56 @@ async def delete_conversation(conversation_id: str) -> dict:
 async def conversation_messages(conversation_id: str) -> dict:
     store = _require_store()
     return {"messages": await store.list_messages(conversation_id)}
+
+
+@app.get("/conversations/{conversation_id}/presentations")
+async def conversation_presentations(conversation_id: str) -> dict:
+    store = _require_store()
+    return {"presentations": await store.list_presentations(conversation_id)}
+
+
+@app.get("/workspace/{conversation_id}/file")
+async def workspace_file(
+    conversation_id: str,
+    path: str = Query(min_length=1),
+    download: int = 0,
+) -> Response:
+    """Serve a workspace file to the browser — but only if the agent presented it.
+
+    The user never enumerates the filesystem; this endpoint refuses any path the
+    agent did not explicitly present, so the browser can never read arbitrary
+    workspace files.
+    """
+    store = _require_store()
+    sandbox_client = _require_sandbox()
+    presentation = await store.latest_presentation(conversation_id, path)
+    if presentation is None:
+        raise HTTPException(status_code=404, detail="File is not available.")
+    try:
+        data = await sandbox_client.read_file(conversation_id, path)
+    except SandboxError as exc:
+        raise HTTPException(status_code=404, detail="File is missing.") from exc
+    except Exception as exc:
+        # The path was presented, so an unexpected failure here is the sandbox
+        # being unreachable — surface it as 502, don't disguise it as 404.
+        logger.exception("Failed to read presented workspace file %r", path)
+        raise HTTPException(
+            status_code=502, detail="Workspace is temporarily unavailable."
+        ) from exc
+
+    filename = path.rsplit("/", 1)[-1]
+    disposition = "attachment" if download else "inline"
+    return Response(
+        content=data,
+        media_type=presentation["mime_type"],
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            # Untrusted agent content: nosniff + a CSP sandbox that gives it an
+            # opaque origin (no app/API access) while still running its scripts.
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox allow-scripts allow-popups allow-forms",
+        },
+    )
 
 
 @app.post("/files", response_model=FileUploadResponse)
@@ -215,22 +270,6 @@ async def delete_file(file_id: str) -> dict:
     return {"ok": deleted}
 
 
-@app.get("/artifacts/{artifact_id}")
-async def download_artifact(artifact_id: str) -> FileResponse:
-    store = _require_store()
-    artifact = await store.get_artifact(artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found.")
-    path = Path(artifact["storage_path"])
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Artifact file is missing.")
-    return FileResponse(
-        path,
-        media_type=artifact["mime_type"],
-        filename=artifact["filename"],
-    )
-
-
 @app.get("/runs/{run_id}")
 async def run(run_id: str) -> dict:
     store = _require_store()
@@ -244,6 +283,13 @@ async def run(run_id: str) -> dict:
 async def run_events(run_id: str, after_event_id: str | None = None) -> dict:
     store = _require_store()
     return {"events": await store.list_events(run_id, after_event_id)}
+
+
+def _require_sandbox() -> SandboxClient:
+    sandbox_client = getattr(app.state, "sandbox_client", None)
+    if sandbox_client is None:
+        raise HTTPException(status_code=503, detail="Workspace is not configured.")
+    return sandbox_client
 
 
 def _require_store() -> PersistenceStore:

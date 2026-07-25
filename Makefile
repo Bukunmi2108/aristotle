@@ -5,17 +5,23 @@ SHELL := /bin/bash
 WEB_PORT ?= 5173
 API_PORT ?= 8400
 SEARCH_PORT ?= 8300
+SANDBOX_PORT ?= 8500
 POSTGRES_PORT ?= 5433
 API_IMAGE ?= aristotle-api
 API_CONTAINER ?= aristotle-api-dev
 SEARCH_IMAGE ?= aristotle-search
 SEARCH_CONTAINER ?= aristotle-search-dev
+SANDBOX_IMAGE ?= aristotle-sandbox
+SANDBOX_CONTAINER ?= aristotle-sandbox-dev
+# Local dev shares one token between the API and sandbox. Read it from api/.env
+# (SANDBOX_AUTH_TOKEN) so both containers match; fall back to a placeholder.
+SANDBOX_DEV_TOKEN ?= $(or $(shell sed -n 's/^SANDBOX_AUTH_TOKEN=//p' api/.env 2>/dev/null | tail -1),dev-sandbox-token)
 POSTGRES_CONTAINER ?= aristotle-postgres-dev
 POSTGRES_DB ?= aristotle
 POSTGRES_USER ?= aristotle
 DEV_NETWORK ?= aristotle-dev
 
-.PHONY: help dev web api api-build api-stop search search-build search-stop postgres postgres-stop dev-network check-dev
+.PHONY: help dev web api api-build api-stop search search-build search-stop sandbox sandbox-build sandbox-stop postgres postgres-stop dev-network check-dev
 
 help:
 	@echo "Targets:"
@@ -45,17 +51,20 @@ dev: check-dev dev-network
 		kill "$$WEB_PID" 2>/dev/null || true; \
 		docker stop "$(API_CONTAINER)" >/dev/null 2>&1 || true; \
 		docker stop "$(SEARCH_CONTAINER)" >/dev/null 2>&1 || true; \
+		docker stop "$(SANDBOX_CONTAINER)" >/dev/null 2>&1 || true; \
 		docker stop "$(POSTGRES_CONTAINER)" >/dev/null 2>&1 || true; \
-		wait "$$WEB_PID" "$$API_PID" "$$SEARCH_PID" 2>/dev/null || true; \
+		wait "$$WEB_PID" "$$API_PID" "$$SEARCH_PID" "$$SANDBOX_PID" 2>/dev/null || true; \
 		exit $$status; \
 	}; \
 	trap cleanup INT TERM EXIT; \
 	$(MAKE) --no-print-directory api-stop >/dev/null 2>&1 || true; \
 	$(MAKE) --no-print-directory search-stop >/dev/null 2>&1 || true; \
+	$(MAKE) --no-print-directory sandbox-stop >/dev/null 2>&1 || true; \
 	( $(MAKE) --no-print-directory search ) & SEARCH_PID=$$!; \
+	( $(MAKE) --no-print-directory sandbox ) & SANDBOX_PID=$$!; \
 	( $(MAKE) --no-print-directory api ) & API_PID=$$!; \
 	( $(MAKE) --no-print-directory web ) & WEB_PID=$$!; \
-	wait "$$SEARCH_PID" "$$API_PID" "$$WEB_PID"
+	wait "$$SEARCH_PID" "$$SANDBOX_PID" "$$API_PID" "$$WEB_PID"
 
 web:
 	@cd web && \
@@ -80,6 +89,8 @@ api: dev-network postgres api-build
 		"$${env_args[@]}" \
 		-e PORT=7860 \
 		-e ARISTOTLE_SEARCH_BASE_URL="http://$(SEARCH_CONTAINER):7860" \
+		-e SANDBOX_SERVICE_BASE_URL="http://$(SANDBOX_CONTAINER):7860" \
+		-e SANDBOX_SERVICE_TOKEN="$(SANDBOX_DEV_TOKEN)" \
 		-p "$(API_PORT):7860" \
 		"$(API_IMAGE)"
 
@@ -106,6 +117,23 @@ search-build:
 
 search-stop:
 	@docker stop "$(SEARCH_CONTAINER)" >/dev/null
+
+sandbox: dev-network sandbox-build
+	@set -euo pipefail; \
+	docker rm -f "$(SANDBOX_CONTAINER)" >/dev/null 2>&1 || true; \
+	docker run --rm \
+		--name "$(SANDBOX_CONTAINER)" \
+		--network "$(DEV_NETWORK)" \
+		-e SANDBOX_AUTH_TOKEN="$(SANDBOX_DEV_TOKEN)" \
+		-e SANDBOX_WORKSPACE_ROOT=/workspace \
+		-p "$(SANDBOX_PORT):7860" \
+		"$(SANDBOX_IMAGE)"
+
+sandbox-build:
+	@docker build -t "$(SANDBOX_IMAGE)" ./sandbox
+
+sandbox-stop:
+	@docker stop "$(SANDBOX_CONTAINER)" >/dev/null
 
 postgres: dev-network
 	@set -euo pipefail; \

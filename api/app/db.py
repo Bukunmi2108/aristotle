@@ -11,8 +11,9 @@ from app.config import ApiSettings
 
 APP_TABLES = (
     "events",
-    "artifacts",
-    "sandbox_runs",
+    "presentations",
+    "workspace_runs",
+    "workspaces",
     "runs",
     "message_files",
     "messages",
@@ -126,11 +127,18 @@ create index if not exists document_chunks_file_idx on document_chunks(file_id, 
 create index if not exists conversation_files_conversation_idx on conversation_files(conversation_id);
 create index if not exists message_files_message_idx on message_files(message_id);
 
-create table if not exists sandbox_runs (
+create table if not exists workspaces (
+  conversation_id text primary key references conversations(id) on delete cascade,
+  status text not null,
+  created_at timestamptz not null,
+  last_active_at timestamptz not null
+);
+
+create table if not exists workspace_runs (
   id text primary key,
-  run_id text references runs(id) on delete cascade,
   conversation_id text not null references conversations(id) on delete cascade,
-  code text not null,
+  command text not null,
+  kind text not null,
   status text not null,
   stdout text,
   stderr text,
@@ -139,18 +147,20 @@ create table if not exists sandbox_runs (
   created_at timestamptz not null
 );
 
-create table if not exists artifacts (
+create index if not exists workspace_runs_conversation_idx on workspace_runs(conversation_id);
+
+create table if not exists presentations (
   id text primary key,
-  sandbox_run_id text not null references sandbox_runs(id) on delete cascade,
-  filename text not null,
+  conversation_id text not null references conversations(id) on delete cascade,
+  path text not null,
   mime_type text not null,
-  size_bytes bigint not null,
-  storage_path text not null,
+  title text,
+  version integer not null,
   created_at timestamptz not null
 );
 
-create index if not exists sandbox_runs_conversation_idx on sandbox_runs(conversation_id);
-create index if not exists artifacts_sandbox_run_idx on artifacts(sandbox_run_id);
+create index if not exists presentations_conversation_idx on presentations(conversation_id, created_at);
+create unique index if not exists presentations_version_uq on presentations(conversation_id, path, version);
 """
 
 
@@ -607,33 +617,41 @@ class PersistenceStore:
         )
         return [_record_to_dict(row) for row in rows]
 
-    async def create_sandbox_run(
-        self,
-        *,
-        sandbox_run_id: str,
-        run_id: str | None,
-        conversation_id: str,
-        code: str,
-    ) -> None:
+    async def ensure_workspace(self, conversation_id: str) -> None:
+        now = _now()
         await self.pool.execute(
             """
-            insert into sandbox_runs (
-              id, run_id, conversation_id, code, status, created_at
-            )
-            values ($1, $2, $3, $4, 'running', $5)
-            on conflict (id) do nothing
+            insert into workspaces (conversation_id, status, created_at, last_active_at)
+            values ($1, 'active', $2, $2)
+            on conflict (conversation_id)
+            do update set last_active_at = excluded.last_active_at, status = 'active'
             """,
-            sandbox_run_id,
-            run_id,
             conversation_id,
-            code,
-            _now(),
+            now,
         )
 
-    async def complete_sandbox_run(
+    async def get_workspace(self, conversation_id: str) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            """
+            select conversation_id, status, created_at, last_active_at
+            from workspaces where conversation_id = $1
+            """,
+            conversation_id,
+        )
+        return _record_to_dict(row) if row is not None else None
+
+    async def delete_workspace(self, conversation_id: str) -> None:
+        await self.pool.execute(
+            "delete from workspaces where conversation_id = $1", conversation_id
+        )
+
+    async def record_workspace_run(
         self,
-        sandbox_run_id: str,
         *,
+        workspace_run_id: str,
+        conversation_id: str,
+        command: str,
+        kind: str,
         status: str,
         stdout: str,
         stderr: str,
@@ -642,58 +660,83 @@ class PersistenceStore:
     ) -> None:
         await self.pool.execute(
             """
-            update sandbox_runs
-            set status = $2, stdout = $3, stderr = $4, exit_code = $5, duration_ms = $6
-            where id = $1
+            insert into workspace_runs (
+              id, conversation_id, command, kind, status, stdout, stderr,
+              exit_code, duration_ms, created_at
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            on conflict (id) do nothing
             """,
-            sandbox_run_id,
+            workspace_run_id,
+            conversation_id,
+            command,
+            kind,
             status,
             stdout,
             stderr,
             exit_code,
             duration_ms,
+            _now(),
         )
 
-    async def create_artifact(
+    async def create_presentation(
         self,
         *,
-        artifact_id: str,
-        sandbox_run_id: str,
-        filename: str,
+        presentation_id: str,
+        conversation_id: str,
+        path: str,
         mime_type: str,
-        size_bytes: int,
-        storage_path: str,
+        title: str | None,
     ) -> dict[str, Any]:
-        now = _now()
+        # Version is per (conversation, path): re-presenting the same file bumps
+        # its version so the panel can step through history in place.
         row = await self.pool.fetchrow(
             """
-            insert into artifacts (
-              id, sandbox_run_id, filename, mime_type, size_bytes, storage_path,
-              created_at
+            with next as (
+              select coalesce(max(version), 0) + 1 as version
+              from presentations
+              where conversation_id = $2 and path = $3
             )
-            values ($1, $2, $3, $4, $5, $6, $7)
-            returning id, sandbox_run_id, filename, mime_type, size_bytes,
-                      storage_path, created_at
+            insert into presentations (
+              id, conversation_id, path, mime_type, title, version, created_at
+            )
+            select $1, $2, $3, $4, $5, next.version, $6 from next
+            returning id, conversation_id, path, mime_type, title, version, created_at
             """,
-            artifact_id,
-            sandbox_run_id,
-            filename,
+            presentation_id,
+            conversation_id,
+            path,
             mime_type,
-            size_bytes,
-            storage_path,
-            now,
+            title,
+            _now(),
         )
         return _record_to_dict(row)
 
-    async def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+    async def list_presentations(self, conversation_id: str) -> list[dict[str, Any]]:
+        rows = await self.pool.fetch(
+            """
+            select id, conversation_id, path, mime_type, title, version, created_at
+            from presentations
+            where conversation_id = $1
+            order by created_at asc
+            """,
+            conversation_id,
+        )
+        return [_record_to_dict(row) for row in rows]
+
+    async def latest_presentation(
+        self, conversation_id: str, path: str
+    ) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(
             """
-            select id, sandbox_run_id, filename, mime_type, size_bytes,
-                   storage_path, created_at
-            from artifacts
-            where id = $1
+            select id, conversation_id, path, mime_type, title, version, created_at
+            from presentations
+            where conversation_id = $1 and path = $2
+            order by version desc
+            limit 1
             """,
-            artifact_id,
+            conversation_id,
+            path,
         )
         return _record_to_dict(row) if row is not None else None
 
