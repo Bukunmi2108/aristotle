@@ -59,7 +59,11 @@ class ChatHistoryMessage(BaseModel):
 class ClientUserMessage(BaseModel):
     type: Literal["user.message"]
     message: str = Field(min_length=1, max_length=12000)
-    conversation_id: str | None = None
+    # Must start with an alphanumeric so it can never be a path-traversal token
+    # (".", "..") when used as a workspace directory name in the sandbox.
+    conversation_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    )
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=24)
     options: ChatOptions = Field(default_factory=ChatOptions)
 
@@ -100,32 +104,3 @@ class FileRecord(BaseModel):
 
 class FileUploadResponse(BaseModel):
     file: FileRecord
-
-
-class ArtifactRecord(BaseModel):
-    """Model/tool-facing artifact reference.
-
-    Deliberately excludes the host `storage_path` — that stays internal to
-    the sandbox/db layer and is never serialized back to the LLM. Downloads
-    go through `GET /artifacts/{id}`, which re-resolves the path from the DB
-    by id rather than trusting anything on this object.
-    """
-
-    id: str
-    sandbox_run_id: str
-    filename: str
-    mime_type: str
-    size_bytes: int
-
-
-SandboxRunStatus = Literal["ok", "error", "timeout", "rejected"]
-
-
-class SandboxRunResult(BaseModel):
-    status: SandboxRunStatus
-    stdout: str
-    stderr: str
-    exit_code: int
-    timed_out: bool
-    duration_ms: int
-    artifacts: list[ArtifactRecord] = Field(default_factory=list)

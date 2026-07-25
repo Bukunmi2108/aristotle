@@ -1,15 +1,15 @@
 from app.agent.capabilities.documents import DocumentTools
 from app.agent.capabilities.local_web import LocalWebTools
 from app.agent.capabilities.research import ResearchTools
-from app.agent.capabilities.sandbox import SandboxTools
 from app.agent.capabilities.utilities import UtilityTools
+from app.agent.capabilities.workspace import WorkspaceTools
 
 CUSTOM_CAPABILITY_TYPES = [
     LocalWebTools,
     ResearchTools,
     UtilityTools,
     DocumentTools,
-    SandboxTools,
+    WorkspaceTools,
 ]
 
 __all__ = [
@@ -17,6 +17,6 @@ __all__ = [
     "DocumentTools",
     "LocalWebTools",
     "ResearchTools",
-    "SandboxTools",
     "UtilityTools",
+    "WorkspaceTools",
 ]

@@ -18,6 +18,8 @@ EventType = Literal[
     "tool.started",
     "tool.result",
     "tool.error",
+    "terminal.output",
+    "workspace.present",
     "reasoning.delta",
     "message.delta",
     "message.completed",
@@ -49,6 +51,12 @@ class Event(BaseModel):
     code: str | None = None
     reason: str | None = None
     latency_ms: int | None = None
+    stream: str | None = None
+    artifact_id: str | None = None
+    path: str | None = None
+    mime_type: str | None = None
+    title: str | None = None
+    version: int | None = None
 
 
 class EventSender:

@@ -35,16 +35,11 @@ class ApiSettings:
     max_upload_bytes: int
     max_parsed_chars: int
     max_chunks_per_file: int
-    sandbox_enabled: bool
-    sandbox_run_timeout_seconds: float
-    sandbox_cpu_seconds: int
-    sandbox_memory_bytes: int
-    sandbox_fsize_bytes: int
-    sandbox_nofile_limit: int
-    sandbox_max_output_chars: int
-    sandbox_workspace_dir: str
-    sandbox_artifact_dir: str
-    sandbox_allowed_imports: str
+    workspace_enabled: bool
+    sandbox_service_base_url: str
+    sandbox_service_token: str | None
+    sandbox_request_timeout_seconds: float
+    sandbox_command_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
@@ -99,31 +94,17 @@ class ApiSettings:
             max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
             max_parsed_chars=int(os.getenv("MAX_PARSED_CHARS", "250000")),
             max_chunks_per_file=int(os.getenv("MAX_CHUNKS_PER_FILE", "250")),
-            sandbox_enabled=_bool_env("SANDBOX_ENABLED", True),
-            sandbox_run_timeout_seconds=float(
-                os.getenv("SANDBOX_RUN_TIMEOUT_SECONDS", "10")
+            workspace_enabled=_bool_env("WORKSPACE_ENABLED", True),
+            sandbox_service_base_url=os.getenv(
+                "SANDBOX_SERVICE_BASE_URL",
+                "http://workspace-aristotle-sandbox:7860",
             ),
-            sandbox_cpu_seconds=int(os.getenv("SANDBOX_CPU_SECONDS", "5")),
-            sandbox_memory_bytes=int(
-                os.getenv("SANDBOX_MEMORY_BYTES", str(512 * 1024 * 1024))
+            sandbox_service_token=_optional_env("SANDBOX_SERVICE_TOKEN"),
+            sandbox_request_timeout_seconds=float(
+                os.getenv("SANDBOX_REQUEST_TIMEOUT_SECONDS", "30")
             ),
-            sandbox_fsize_bytes=int(
-                os.getenv("SANDBOX_FSIZE_BYTES", str(50 * 1024 * 1024))
-            ),
-            sandbox_nofile_limit=int(os.getenv("SANDBOX_NOFILE_LIMIT", "64")),
-            sandbox_max_output_chars=int(
-                os.getenv("SANDBOX_MAX_OUTPUT_CHARS", "4000")
-            ),
-            sandbox_workspace_dir=os.getenv(
-                "SANDBOX_WORKSPACE_DIR", "storage/sandbox"
-            ),
-            sandbox_artifact_dir=os.getenv(
-                "SANDBOX_ARTIFACT_DIR", "storage/artifacts"
-            ),
-            sandbox_allowed_imports=os.getenv(
-                "SANDBOX_ALLOWED_IMPORTS",
-                "math,statistics,json,re,datetime,itertools,collections,csv,"
-                "pandas,numpy,matplotlib",
+            sandbox_command_timeout_seconds=float(
+                os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "120")
             ),
         )
 

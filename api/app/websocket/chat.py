@@ -11,7 +11,6 @@ from app.errors import ServiceWakeTimeoutError
 from app.events import EventSender
 from app.models import ClientUserMessage
 from app.services.model import ModelClient
-from app.services.sandbox import SandboxExecutor
 from app.services.search import SearchClient
 from app.services.wake import wait_for_service_ready
 
@@ -25,7 +24,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
 
     model_client: ModelClient = websocket.app.state.model_client
     search_client: SearchClient = websocket.app.state.search_client
-    sandbox_executor: SandboxExecutor | None = websocket.app.state.sandbox_executor
+    sandbox_client = getattr(websocket.app.state, "sandbox_client", None)
     events: EventSender | None = None
 
     try:
@@ -108,7 +107,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
             search_client=search_client,
             settings=SETTINGS,
             document_store=store,
-            sandbox_executor=sandbox_executor,
+            sandbox_client=sandbox_client,
         )
         final_message = await agent_runtime.stream_response(user_message, events)
 

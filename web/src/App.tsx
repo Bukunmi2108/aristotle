@@ -14,6 +14,7 @@ import {
   fetchConversation,
   fetchConversationMessages,
   fetchConversations,
+  fetchPresentations,
   fetchServices,
   renameConversation as renameServerConversation,
   uploadFile,
@@ -26,6 +27,8 @@ import {
   MessageList,
   ServiceAlert,
 } from "./components";
+import { ArtifactPanel } from "./workspace";
+import { presentedFromEvent } from "./workspaceUtils";
 import {
   createConversation,
   loadConversations,
@@ -39,7 +42,6 @@ import {
 } from "./sourceUtils";
 import { pathForConversation, routeFromPath } from "./urlSync";
 import type {
-  ArtifactRef,
   ChatHistoryMessage,
   ChatMessage,
   Conversation,
@@ -47,6 +49,7 @@ import type {
   MessageAttachment,
   MessagePart,
   ModelProviderState,
+  PresentedArtifact,
   RunState,
   ServerEvent,
   SourcePreview,
@@ -86,6 +89,9 @@ function App() {
     useState<ModelProviderState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [artifacts, setArtifacts] = useState<PresentedArtifact[]>([]);
+  const [activeArtifactPath, setActiveArtifactPath] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<FileRecord[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -199,6 +205,38 @@ function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  // Rehydrate the artifact panel from persisted presentations when the active
+  // conversation changes. Updates run only in async callbacks (not the effect
+  // body) to avoid cascading renders.
+  useEffect(() => {
+    let cancelled = false;
+    const load = activeId ? fetchPresentations(activeId) : Promise.resolve([]);
+    load
+      .then((presented) => {
+        if (cancelled) {
+          return;
+        }
+        setArtifacts(presented);
+        setActiveArtifactPath(
+          presented.length > 0 ? presented[presented.length - 1].path : null,
+        );
+        setPanelOpen(false);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        // Empty history returns [] (200), so reaching here is a real failure.
+        console.error("Failed to load presentations", error);
+        setArtifacts([]);
+        setActiveArtifactPath(null);
+        setPanelOpen(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId]);
 
   useEffect(() => {
     if (!activeMessageCount) {
@@ -741,7 +779,6 @@ function App() {
         event.tool,
         event.result_count,
         event.result_preview,
-        event.artifacts,
         event.output,
       );
       return;
@@ -754,6 +791,21 @@ function App() {
         event.tool,
         event.message || "Tool failed.",
       );
+      return;
+    }
+
+    if (event.type === "terminal.output" && event.text) {
+      appendTerminalOutput(conversationId, assistantId, event.tool, event.text);
+      return;
+    }
+
+    if (event.type === "workspace.present") {
+      const artifact = presentedFromEvent(event);
+      if (artifact) {
+        setArtifacts((prev) => [...prev, artifact]);
+        setActiveArtifactPath(artifact.path);
+        setPanelOpen(true);
+      }
       return;
     }
 
@@ -818,13 +870,33 @@ function App() {
     ]);
   }
 
+  function appendTerminalOutput(
+    conversationId: string,
+    assistantId: string,
+    toolName: string | undefined,
+    text: string,
+  ) {
+    updateAssistantParts(conversationId, assistantId, (parts) => {
+      const next = [...parts];
+      const index = findLastToolIndex(next, toolName, "running");
+      if (index >= 0 && next[index].type === "tool") {
+        const existing = next[index].terminalOutput || "";
+        // Cap accumulated output so a chatty build cannot grow unbounded.
+        next[index] = {
+          ...next[index],
+          terminalOutput: (existing + text).slice(-8000),
+        };
+      }
+      return next;
+    });
+  }
+
   function completeTool(
     conversationId: string,
     assistantId: string,
     toolName?: string,
     resultCount?: number,
     resultPreview?: ToolResultPreview[],
-    artifacts?: ArtifactRef[],
     output?: ToolOutput,
   ) {
     const partStatus = output && output.status !== "ok" ? "error" : "complete";
@@ -838,7 +910,6 @@ function App() {
           status: partStatus,
           resultCount,
           resultPreview,
-          artifacts,
           output,
         };
       } else {
@@ -850,7 +921,6 @@ function App() {
           timestamp: new Date().toISOString(),
           resultCount,
           resultPreview,
-          artifacts,
           output,
         });
       }
@@ -1208,6 +1278,24 @@ function App() {
           />
         )}
       </section>
+      {activeId && panelOpen && artifacts.length > 0 && (
+        <ArtifactPanel
+          conversationId={activeId}
+          artifacts={artifacts}
+          activePath={activeArtifactPath}
+          onSelectPath={setActiveArtifactPath}
+          onClose={() => setPanelOpen(false)}
+        />
+      )}
+      {activeId && !panelOpen && artifacts.length > 0 && (
+        <button
+          type="button"
+          className="artifact-reopen"
+          onClick={() => setPanelOpen(true)}
+        >
+          Artifacts
+        </button>
+      )}
     </main>
   );
 }

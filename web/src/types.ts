@@ -110,13 +110,6 @@ export type SourcePreview = {
 
 export type ToolResultPreview = SourcePreview;
 
-export type ArtifactRef = {
-  id: string;
-  filename: string;
-  mime_type: string;
-  size_bytes: number;
-};
-
 export type ToolOutput = {
   status: "ok" | "error" | "timeout" | "rejected";
   stdout: string;
@@ -137,6 +130,8 @@ export type ServerEventType =
   | "tool.started"
   | "tool.result"
   | "tool.error"
+  | "terminal.output"
+  | "workspace.present"
   | "reasoning.delta"
   | "message.delta"
   | "message.completed"
@@ -156,13 +151,26 @@ export type ServerEvent = {
   input?: Record<string, unknown>;
   result_count?: number;
   result_preview?: ToolResultPreview[];
-  artifacts?: ArtifactRef[];
   output?: ToolOutput;
   text?: string;
   message?: string;
   code?: string;
   reason?: string;
   latency_ms?: number | null;
+  stream?: "stdout" | "stderr" | string;
+  artifact_id?: string;
+  path?: string;
+  mime_type?: string;
+  title?: string | null;
+  version?: number;
+};
+
+export type PresentedArtifact = {
+  id: string;
+  path: string;
+  mimeType: string;
+  title?: string | null;
+  version: number;
 };
 
 export type MessageRole = "user" | "assistant";
@@ -183,8 +191,8 @@ export type MessagePart =
       input?: Record<string, unknown>;
       resultCount?: number;
       resultPreview?: ToolResultPreview[];
-      artifacts?: ArtifactRef[];
       output?: ToolOutput;
+      terminalOutput?: string;
       message?: string;
     }
   | {
