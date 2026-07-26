@@ -111,11 +111,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="list_files", strict=False)
         async def list_files(ctx: RunContext[AgentDeps]) -> ListFilesResult:
             """List uploaded files available to this run."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="list_files",
-                input={"file_ids": ctx.deps.file_ids},
-            )
             files = []
             for file_id in ctx.deps.file_ids:
                 record = await _get_file(ctx, file_id)
@@ -125,9 +120,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="read_file", strict=False)
         async def read_file(ctx: RunContext[AgentDeps], file_id: str) -> ReadFileResult:
             """Read the first chunks of an uploaded file."""
-            await ctx.deps.events.send(
-                "tool.started", tool="read_file", input={"file_id": file_id}
-            )
             _assert_allowed_file(ctx, file_id)
             store = _document_store(ctx)
             file_record = await _get_file(ctx, file_id)
@@ -149,11 +141,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
             max_results: int = 5,
         ) -> SearchDocumentResult:
             """Search one uploaded document by lexical chunk match."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="search_document",
-                input={"file_id": file_id, "query": query, "max_results": max_results},
-            )
             _assert_allowed_file(ctx, file_id)
             store = _document_store(ctx)
             chunks = await store.list_chunks_for_files([file_id])
@@ -173,15 +160,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
             selected = file_ids or ctx.deps.file_ids
             for file_id in selected:
                 _assert_allowed_file(ctx, file_id)
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="search_documents",
-                input={
-                    "file_ids": selected,
-                    "query": query,
-                    "max_results": max_results,
-                },
-            )
             store = _document_store(ctx)
             chunks = await store.list_chunks_for_files(selected)
             return SearchDocumentResult(
@@ -194,9 +172,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], chunk_id: str
         ) -> QuoteDocumentResult:
             """Return an exact quote from a document chunk."""
-            await ctx.deps.events.send(
-                "tool.started", tool="quote_document", input={"chunk_id": chunk_id}
-            )
             store = _document_store(ctx)
             chunk = await store.get_document_chunk(chunk_id)
             if chunk is None:
@@ -215,9 +190,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], file_id: str
         ) -> SummarizeDocumentResult:
             """Return representative chunks for summarizing an uploaded file."""
-            await ctx.deps.events.send(
-                "tool.started", tool="summarize_document", input={"file_id": file_id}
-            )
             _assert_allowed_file(ctx, file_id)
             store = _document_store(ctx)
             file_record = await _get_file(ctx, file_id)
@@ -242,15 +214,6 @@ class DocumentTools(AbstractCapability[AgentDeps]):
             selected = file_ids or ctx.deps.file_ids
             for file_id in selected:
                 _assert_allowed_file(ctx, file_id)
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="compare_documents",
-                input={
-                    "file_ids": selected,
-                    "question": question,
-                    "max_results": max_results,
-                },
-            )
             store = _document_store(ctx)
             chunks = await store.list_chunks_for_files(selected)
             return SearchDocumentResult(

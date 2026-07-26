@@ -13,7 +13,6 @@ from pydantic_ai.tools import RunContext
 
 from app.agent.deps import AgentDeps
 from app.models import SearchResponse, SearchToolRequest
-from app.services.wake import wait_for_service_ready
 
 
 Freshness = Literal["day", "month", "year"]
@@ -104,22 +103,7 @@ class LocalWebTools(AbstractCapability[AgentDeps]):
             freshness=freshness,
             domains=domains or [],
         )
-        await ctx.deps.events.send(
-            "tool.started",
-            tool=tool_name,
-            input=request.model_dump(exclude_none=True),
-        )
-        try:
-            await wait_for_service_ready(
-                service="search",
-                is_ready=ctx.deps.search_client.is_ready,
-                settings=ctx.deps.settings,
-                events=ctx.deps.events,
-            )
-            return await ctx.deps.search_client.search(request)
-        except Exception as exc:
-            await ctx.deps.events.send("tool.error", tool=tool_name, message=str(exc))
-            raise
+        return await ctx.deps.search_client.search(request)
 
     async def fetch_url_impl(
         self,
@@ -128,7 +112,6 @@ class LocalWebTools(AbstractCapability[AgentDeps]):
         url: str,
         tool_name: str = "fetch_url",
     ) -> FetchUrlResult:
-        await ctx.deps.events.send("tool.started", tool=tool_name, input={"url": url})
         try:
             _validate_public_http_url(url)
             raw, final_url, content_type, truncated = await _read_limited(

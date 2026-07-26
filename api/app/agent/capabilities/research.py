@@ -165,17 +165,6 @@ class ResearchTools(LocalWebTools):
         ) -> SearchMultiQueryResult:
             """Run several focused web searches, deduplicate URLs, and return source candidates."""
             capped_queries = _cap_unique_strings(queries, self.max_queries_per_run)
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="search_multi_query",
-                input={
-                    "goal": goal,
-                    "queries": capped_queries,
-                    "max_results_per_query": max_results_per_query,
-                    "freshness": freshness,
-                    "domains": domains or [],
-                },
-            )
             tasks = [
                 self.search_web_impl(
                     ctx,
@@ -241,11 +230,6 @@ class ResearchTools(LocalWebTools):
             source: ResearchSource,
         ) -> SourceFactsResult:
             """Extract concise factual statements from one fetched source."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="extract_source_facts",
-                input={"url": source.url, "title": source.title},
-            )
             facts = _extract_facts(source, max_facts=self.max_source_facts)
             return SourceFactsResult(url=source.url, title=source.title, facts=facts)
 
@@ -256,11 +240,6 @@ class ResearchTools(LocalWebTools):
             sources: list[ResearchSource],
         ) -> RankSourcesResult:
             """Rank candidate sources against a research goal using deterministic relevance signals."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="rank_sources",
-                input={"goal": goal, "source_count": len(sources)},
-            )
             ranked = sorted(
                 (_rank_source(goal, source) for source in sources),
                 key=lambda item: item.relevance_score,
@@ -275,14 +254,6 @@ class ResearchTools(LocalWebTools):
             sources: list[ResearchSource],
         ) -> CitationBuildResult:
             """Build citation candidates from known source URLs for an answer draft."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="build_citations",
-                input={
-                    "answer_chars": len(answer_draft),
-                    "source_count": len(sources),
-                },
-            )
             return _build_citations(
                 answer_draft,
                 sources,

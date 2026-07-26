@@ -76,19 +76,9 @@ class UtilityTools(AbstractCapability[AgentDeps]):
         ) -> DatetimeResult:
             """Get the current date and time for an IANA timezone."""
             requested_timezone = timezone or self.default_timezone
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="get_datetime",
-                input={"timezone": requested_timezone},
-            )
             try:
                 tz = ZoneInfo(requested_timezone)
             except ZoneInfoNotFoundError as exc:
-                await ctx.deps.events.send(
-                    "tool.error",
-                    tool="get_datetime",
-                    message=f"Unknown timezone: {requested_timezone}",
-                )
                 raise ValueError(f"Unknown timezone: {requested_timezone}") from exc
 
             now = datetime.now(tz)
@@ -112,25 +102,11 @@ class UtilityTools(AbstractCapability[AgentDeps]):
         ) -> CalculationResult:
             """Evaluate a deterministic arithmetic expression."""
             expression = expression.strip()
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="calculate",
-                input={"expression": expression},
-            )
             if len(expression) > self.max_expression_chars:
                 message = "Expression is too long."
-                await ctx.deps.events.send(
-                    "tool.error", tool="calculate", message=message
-                )
                 raise ValueError(message)
 
-            try:
-                result = _eval_node(ast.parse(expression, mode="eval").body)
-            except Exception as exc:
-                await ctx.deps.events.send(
-                    "tool.error", tool="calculate", message=str(exc)
-                )
-                raise
+            result = _eval_node(ast.parse(expression, mode="eval").body)
 
             return CalculationResult(
                 expression=expression, result=_format_decimal(result)

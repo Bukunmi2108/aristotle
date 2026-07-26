@@ -761,7 +761,15 @@ function App() {
       return;
     }
 
-    if (event.type === "model.first_token") {
+    if (event.type === "model.first_event") {
+      updateAssistantMetrics(conversationId, assistantId, {
+        firstModelLatencyMs: event.latency_ms,
+        firstModelAt: event.timestamp,
+      });
+      return;
+    }
+
+    if (event.type === "model.first_text") {
       setModelProvider((current) => ({
         provider: event.provider || current?.provider,
         model: event.model || current?.model,
@@ -772,16 +780,29 @@ function App() {
         source: "event",
       }));
       updateAssistantMetrics(conversationId, assistantId, {
-        ttftMs: event.latency_ms,
-        firstTokenAt: event.timestamp,
+        firstTextLatencyMs: event.latency_ms,
+        firstTextAt: event.timestamp,
+      });
+      return;
+    }
+
+    if (event.type === "run.usage" && event.usage) {
+      updateAssistantMetrics(conversationId, assistantId, {
+        inputTokens: event.usage.input_tokens,
+        outputTokens: event.usage.output_tokens,
+        cacheReadTokens: event.usage.cache_read_tokens,
+        cacheWriteTokens: event.usage.cache_write_tokens,
+        modelRequests: event.usage.requests,
+        toolCalls: event.usage.tool_calls,
       });
       return;
     }
 
     if (event.type === "tool.started") {
       appendTool(conversationId, assistantId, {
-        id: `${event.type}-${event.sequence}`,
+        id: event.tool_call_id || `${event.type}-${event.sequence}`,
         type: "tool",
+        toolCallId: event.tool_call_id,
         label: event.tool || "tool",
         status: "running",
         timestamp: event.timestamp,
@@ -794,6 +815,7 @@ function App() {
       completeTool(
         conversationId,
         assistantId,
+        event.tool_call_id,
         event.tool,
         event.result_count,
         event.result_preview,
@@ -806,6 +828,7 @@ function App() {
       failTool(
         conversationId,
         assistantId,
+        event.tool_call_id,
         event.tool,
         event.message || "Tool failed.",
       );
@@ -813,7 +836,13 @@ function App() {
     }
 
     if (event.type === "terminal.output" && event.text) {
-      appendTerminalOutput(conversationId, assistantId, event.tool, event.text);
+      appendTerminalOutput(
+        conversationId,
+        assistantId,
+        event.tool_call_id,
+        event.tool,
+        event.text,
+      );
       return;
     }
 
@@ -907,12 +936,13 @@ function App() {
   function appendTerminalOutput(
     conversationId: string,
     assistantId: string,
+    toolCallId: string | undefined,
     toolName: string | undefined,
     text: string,
   ) {
     updateAssistantParts(conversationId, assistantId, (parts) => {
       const next = [...parts];
-      const index = findLastToolIndex(next, toolName, "running");
+      const index = findToolIndex(next, toolCallId, toolName, "running");
       if (index >= 0 && next[index].type === "tool") {
         const existing = next[index].terminalOutput || "";
         // Cap accumulated output so a chatty build cannot grow unbounded.
@@ -928,6 +958,7 @@ function App() {
   function completeTool(
     conversationId: string,
     assistantId: string,
+    toolCallId?: string,
     toolName?: string,
     resultCount?: number,
     resultPreview?: ToolResultPreview[],
@@ -937,7 +968,7 @@ function App() {
 
     updateAssistantParts(conversationId, assistantId, (parts) => {
       const next = [...parts];
-      const index = findLastToolIndex(next, toolName, "running");
+      const index = findToolIndex(next, toolCallId, toolName, "running");
       if (index >= 0 && next[index].type === "tool") {
         next[index] = {
           ...next[index],
@@ -950,6 +981,7 @@ function App() {
         next.push({
           id: `tool-result-${crypto.randomUUID()}`,
           type: "tool",
+          toolCallId,
           label: toolName || "tool",
           status: partStatus,
           timestamp: new Date().toISOString(),
@@ -1027,12 +1059,13 @@ function App() {
   function failTool(
     conversationId: string,
     assistantId: string,
+    toolCallId?: string,
     toolName?: string,
     message?: string,
   ) {
     updateAssistantParts(conversationId, assistantId, (parts) => {
       const next = [...parts];
-      const index = findLastToolIndex(next, toolName, "running");
+      const index = findToolIndex(next, toolCallId, toolName, "running");
       if (index >= 0 && next[index].type === "tool") {
         next[index] = {
           ...next[index],
@@ -1043,6 +1076,7 @@ function App() {
         next.push({
           id: `tool-error-${crypto.randomUUID()}`,
           type: "tool",
+          toolCallId,
           label: toolName || "tool",
           status: "error",
           timestamp: new Date().toISOString(),
@@ -1369,8 +1403,9 @@ function App() {
   );
 }
 
-function findLastToolIndex(
+function findToolIndex(
   parts: MessagePart[],
+  toolCallId?: string,
   toolName?: string,
   status?: "running" | "complete" | "error",
 ) {
@@ -1378,6 +1413,7 @@ function findLastToolIndex(
     const part = parts[index];
     if (
       part.type === "tool" &&
+      (!toolCallId || part.toolCallId === toolCallId) &&
       (!toolName || part.label === toolName) &&
       (!status || part.status === status)
     ) {
@@ -1634,41 +1670,21 @@ function textFromParts(parts: MessagePart[]): string {
 
 function finalizeMessageMetrics(
   message: ChatMessage,
-  content: string,
+  _content: string,
   completedAt: string,
 ): ChatMessage["metrics"] {
   const current = message.metrics ?? {};
   const startedMs = current.startedAt ? Date.parse(current.startedAt) : NaN;
   const completedMs = Date.parse(completedAt);
-  const firstTokenMs = current.firstTokenAt ? Date.parse(current.firstTokenAt) : NaN;
   const durationMs =
     Number.isFinite(startedMs) && Number.isFinite(completedMs)
       ? Math.max(0, completedMs - startedMs)
       : current.durationMs;
-  const outputTokens = current.outputTokens ?? estimateTokenCount(content);
-  const generationMs =
-    Number.isFinite(firstTokenMs) && Number.isFinite(completedMs)
-      ? Math.max(1, completedMs - firstTokenMs)
-      : durationMs;
-  const tps =
-    current.tps ??
-    (outputTokens && generationMs
-      ? Number((outputTokens / (generationMs / 1000)).toFixed(1))
-      : null);
 
   return {
     ...current,
     durationMs,
-    outputTokens,
-    tps,
-    tokenSource: current.tokenSource ?? "estimated",
   };
-}
-
-function estimateTokenCount(text: string): number | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  return Math.max(1, Math.round(trimmed.length / 4));
 }
 
 function providerFromServices(services: ServicesResponse): ModelProviderState | null {

@@ -113,17 +113,11 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], command: str, timeout_seconds: float | None = None
         ) -> CommandResult:
             """Run a shell command in the conversation workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="run_command", input={"command": command}
-            )
             return await _exec(ctx, command, timeout_seconds)
 
         @toolset.tool(name="run_python", strict=False)
         async def run_python(ctx: RunContext[AgentDeps], code: str) -> CommandResult:
             """Run a Python snippet in the workspace. Print whatever you need to see."""
-            await ctx.deps.events.send(
-                "tool.started", tool="run_python", input={"code": code}
-            )
             workspace = _workspace(ctx)
             script = f".aristotle/run_{uuid4().hex}.py"
             try:
@@ -137,9 +131,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="list_dir", strict=False)
         async def list_dir(ctx: RunContext[AgentDeps], path: str = ".") -> DirListing:
             """List files and folders in the workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="list_dir", input={"path": path}
-            )
             try:
                 entries = await _workspace(ctx).list_dir(path)
             except SandboxError as exc:
@@ -153,9 +144,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], path: str
         ) -> FileContent:
             """Read a text file from the workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="read_workspace_file", input={"path": path}
-            )
             try:
                 data = await _workspace(ctx).read_file(path)
             except SandboxError as exc:
@@ -169,9 +157,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], path: str, content: str
         ) -> WriteResult:
             """Write a text file into the workspace, creating parent folders."""
-            await ctx.deps.events.send(
-                "tool.started", tool="write_file", input={"path": path}
-            )
             try:
                 result = await _workspace(ctx).write_file(path, content.encode())
             except SandboxError as exc:
@@ -181,9 +166,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="make_dir", strict=False)
         async def make_dir(ctx: RunContext[AgentDeps], path: str) -> OkResult:
             """Create a directory (and parents) in the workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="make_dir", input={"path": path}
-            )
             try:
                 await _workspace(ctx).make_dir(path)
             except SandboxError as exc:
@@ -193,9 +175,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="move_path", strict=False)
         async def move_path(ctx: RunContext[AgentDeps], src: str, dst: str) -> OkResult:
             """Move or rename a file/folder in the workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="move_path", input={"src": src, "dst": dst}
-            )
             try:
                 await _workspace(ctx).move(src, dst)
             except SandboxError as exc:
@@ -205,9 +184,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
         @toolset.tool(name="delete_path", strict=False)
         async def delete_path(ctx: RunContext[AgentDeps], path: str) -> OkResult:
             """Delete a file or folder from the workspace."""
-            await ctx.deps.events.send(
-                "tool.started", tool="delete_path", input={"path": path}
-            )
             try:
                 await _workspace(ctx).delete(path)
             except SandboxError as exc:
@@ -219,11 +195,6 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], path: str, title: str | None = None
         ) -> PresentResult:
             """Show a finished workspace file to the user in the side panel."""
-            await ctx.deps.events.send(
-                "tool.started",
-                tool="present_file",
-                input={"path": path, "title": title},
-            )
             workspace = _workspace(ctx)
             if not await _exists(workspace, path):
                 await _fail(
@@ -285,14 +256,7 @@ def _workspace(ctx: RunContext[AgentDeps]) -> Workspace:
 
 
 async def _fail(ctx: RunContext[AgentDeps], tool: str, message: str) -> NoReturn:
-    """Surface a recoverable tool failure to both the UI and the model.
-
-    Emits `tool.error` (so the frontend tool card resolves instead of hanging in
-    "running") and raises `ModelRetry` (so the model receives the error and can
-    correct or narrate it) rather than a bare ValueError, which would abort the
-    whole agent turn as an internal error.
-    """
-    await ctx.deps.events.send("tool.error", tool=tool, message=message)
+    """Raise a recoverable tool failure for the runtime to publish once."""
     raise ModelRetry(message)
 
 
@@ -314,6 +278,7 @@ async def _exec(
         await ctx.deps.events.send(
             "terminal.output",
             tool="run_command",
+            tool_call_id=ctx.tool_call_id,
             stream=event.get("type"),
             text=event.get("text", ""),
         )

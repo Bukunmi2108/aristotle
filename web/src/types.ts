@@ -136,7 +136,9 @@ export type ServerEventType =
   | "agent.started"
   | "model.selected"
   | "model.fallback"
-  | "model.first_token"
+  | "model.first_event"
+  | "model.first_text"
+  | "run.usage"
   | "tool.started"
   | "tool.result"
   | "tool.error"
@@ -158,6 +160,7 @@ export type ServerEvent = {
   model?: string;
   url?: string;
   tool?: string;
+  tool_call_id?: string;
   input?: Record<string, unknown>;
   result_count?: number;
   result_preview?: ToolResultPreview[];
@@ -167,6 +170,14 @@ export type ServerEvent = {
   code?: string;
   reason?: string;
   latency_ms?: number | null;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    requests: number;
+    tool_calls: number;
+  };
   stream?: "stdout" | "stderr" | string;
   artifact_id?: string;
   message_id?: string;
@@ -201,6 +212,7 @@ export type MessagePart =
   | {
       id: string;
       type: "tool";
+      toolCallId?: string;
       label: string;
       status: "running" | "complete" | "error";
       timestamp: string;
@@ -231,13 +243,18 @@ export type ChatMessage = {
 };
 
 export type MessageMetrics = {
-  ttftMs?: number | null;
+  firstModelLatencyMs?: number | null;
+  firstTextLatencyMs?: number | null;
   durationMs?: number | null;
+  inputTokens?: number | null;
   outputTokens?: number | null;
-  tps?: number | null;
-  tokenSource?: "server" | "estimated";
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  modelRequests?: number | null;
+  toolCalls?: number | null;
   startedAt?: string | null;
-  firstTokenAt?: string | null;
+  firstModelAt?: string | null;
+  firstTextAt?: string | null;
 };
 
 export type Conversation = {
