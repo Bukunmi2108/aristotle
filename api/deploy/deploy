@@ -1,26 +1,14 @@
 #!/usr/bin/env bash
-# Server-side exact-revision deployment for aristotle-api.
-#
-# Installed once at /opt/workspace/apps/aristotle-api/deploy on the VPS (it must
-# pre-exist, since it is what clones the checkout). CI invokes it over SSH with
-# the exact commit to deploy:
-#
-#     /opt/workspace/apps/aristotle-api/deploy <git-sha>
-#
-# It never overwrites the application .env and never touches shared infra
-# (Caddy, Sablier, Postgres, networks).
+# Stable VPS bootstrap. Keep deployment behavior in the checked-out release
+# script so every exact-revision deployment uses the logic from that revision.
 set -euo pipefail
 
 APP_DIR="/opt/workspace/apps/aristotle-api"
 SOURCE_DIR="$APP_DIR/source"
 REPO_URL="https://github.com/Bukunmi2108/aristotle.git"
-COMPOSE_FILE="$SOURCE_DIR/api/deploy/compose.production.yaml"
-CONTAINER="workspace-aristotle-api"
 
 SHA="${1:?usage: deploy <git-sha>}"
 
-# 1-2. Clone only when absent, then fetch from the expected origin and check out
-# the exact revision in detached mode.
 if [ ! -d "$SOURCE_DIR/.git" ]; then
   git clone "$REPO_URL" "$SOURCE_DIR"
 fi
@@ -28,46 +16,4 @@ git -C "$SOURCE_DIR" remote set-url origin "$REPO_URL"
 git -C "$SOURCE_DIR" fetch origin "$SHA"
 git -C "$SOURCE_DIR" checkout --detach "$SHA"
 
-# 3. Build and recreate this application (API + its private sandbox service).
-cd "$APP_DIR"
-APP_SOURCE_ROOT="./source" \
-APP_ENV_FILE="./.env" \
-APP_IMAGE_TAG="$SHA" \
-  docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" up -d --build backend sandbox
-
-# 4. Wait for each container to become healthy. Fail fast if one exits/dies on
-# boot (otherwise a crashed container is indistinguishable from a slow one and
-# burns the whole timeout), and fail loudly if it never reports healthy.
-wait_healthy() {
-  local container="$1"
-  local attempts=30
-  echo "Waiting for $container to become healthy..."
-  for attempt in $(seq 1 "$attempts"); do
-    health="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo missing)"
-    if [ "$health" = "healthy" ]; then
-      echo "$container is healthy"
-      return 0
-    fi
-    run_state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo missing)"
-    if [ "$run_state" = "exited" ] || [ "$run_state" = "dead" ]; then
-      exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container" 2>/dev/null || echo '?')"
-      echo "ERROR: $container $run_state before becoming healthy (exit code $exit_code)" >&2
-      docker logs --tail 100 "$container" >&2 || true
-      return 1
-    fi
-    if [ "$attempt" -eq "$attempts" ]; then
-      echo "ERROR: $container did not become healthy in time (status: $run_state, health: $health)" >&2
-      docker logs --tail 100 "$container" >&2 || true
-      return 1
-    fi
-    sleep 5
-  done
-}
-
-wait_healthy "$CONTAINER"
-wait_healthy "workspace-aristotle-sandbox"
-
-# 5. Conservative cleanup of dangling images only.
-docker image prune -f >/dev/null 2>&1 || true
-
-echo "Deployed aristotle-api at $SHA"
+exec "$SOURCE_DIR/api/deploy/release" "$SHA"

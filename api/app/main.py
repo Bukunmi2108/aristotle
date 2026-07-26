@@ -25,6 +25,7 @@ from app.models import (
     ReadyResponse,
     RenameConversationRequest,
     RootResponse,
+    ServiceStatus,
     ServicesResponse,
 )
 from app.services.model import ModelClient
@@ -95,12 +96,27 @@ async def healthz() -> HealthResponse:
 async def services() -> ServicesResponse:
     model_client: ModelClient = app.state.model_client
     search_client: SearchClient = app.state.search_client
-    model_status, search_status = await asyncio.gather(
-        model_client.status(), search_client.status()
+    sandbox_client: SandboxClient | None = getattr(app.state, "sandbox_client", None)
+    checks = [model_client.status(), search_client.status()]
+    if SETTINGS.workspace_enabled and sandbox_client is not None:
+        checks.append(sandbox_client.status())
+    statuses = await asyncio.gather(*checks)
+    sandbox_status = (
+        statuses[2]
+        if len(statuses) == 3
+        else ServiceStatus(
+            ok=False,
+            service="sandbox",
+            url=SETTINGS.sandbox_service_base_url,
+            error="Workspace service is unavailable.",
+        )
+        if SETTINGS.workspace_enabled
+        else None
     )
     return ServicesResponse(
-        model=model_status,
-        search=search_status,
+        model=statuses[0],
+        search=statuses[1],
+        sandbox=sandbox_status,
         poll_interval_seconds=SETTINGS.wake_poll_interval_seconds,
         wake_timeout_seconds=SETTINGS.wake_timeout_seconds,
     )

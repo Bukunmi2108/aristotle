@@ -114,6 +114,28 @@ class SandboxClientTest(unittest.TestCase):
             asyncio.run(client.read_file("c", "x"))
         self.assertIn("File not found", str(ctx.exception))
 
+    def test_connection_error_is_reported_as_workspace_unavailable(self):
+        def fail(_request):
+            raise httpx.ConnectError("DNS failed")
+
+        client = self._client(fail)
+
+        with self.assertRaisesRegex(SandboxError, "Workspace service is unavailable"):
+            asyncio.run(client.make_dir("c", "reports"))
+
+    def test_status_reports_workspace_unavailable_without_exposing_transport_error(
+        self,
+    ):
+        def fail(_request):
+            raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+
+        client = self._client(fail)
+        status = asyncio.run(client.status())
+
+        self.assertFalse(status.ok)
+        self.assertEqual(status.service, "sandbox")
+        self.assertEqual(status.error, "Workspace service is unavailable.")
+
     def test_exec_stream_forwards_chunks_and_returns_result(self):
         ndjson = (
             '{"type": "stdout", "text": "hello\\n"}\n'

@@ -1825,18 +1825,28 @@ function healthState(
     };
   }
 
-  if (!services.model.ok || !services.search.ok) {
+  if (
+    !services.model.ok ||
+    !services.search.ok ||
+    (services.sandbox && !services.sandbox.ok)
+  ) {
+    const workspaceDetail = services.sandbox
+      ? ` Workspace: ${serviceSummary(services.sandbox)}.`
+      : "";
     return {
       label: "Degraded",
       tone: "warn",
-      detail: `Model: ${serviceSummary(services.model)}. Search: ${serviceSummary(services.search)}.`,
+      detail: `Model: ${serviceSummary(services.model)}. Search: ${serviceSummary(services.search)}.${workspaceDetail}`,
     };
   }
 
+  const workspaceDetail = services.sandbox
+    ? ` Workspace: ${serviceSummary(services.sandbox)}.`
+    : "";
   return {
     label: "Healthy",
     tone: "ready",
-    detail: `Model: ${serviceSummary(services.model)}. Search: ${serviceSummary(services.search)}.`,
+    detail: `Model: ${serviceSummary(services.model)}. Search: ${serviceSummary(services.search)}.${workspaceDetail}`,
   };
 }
 

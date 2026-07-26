@@ -2,7 +2,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-ServiceName = Literal["model", "search"]
+ServiceName = Literal["model", "search", "sandbox"]
 Freshness = Literal["day", "month", "year"]
 
 
@@ -29,12 +29,17 @@ class ServiceStatus(BaseModel):
 class ServicesResponse(BaseModel):
     model: ServiceStatus
     search: ServiceStatus
+    sandbox: ServiceStatus | None = None
     poll_interval_seconds: float | None = None
     wake_timeout_seconds: float | None = None
 
     @property
     def ok(self) -> bool:
-        return self.model.ok and self.search.ok
+        return (
+            self.model.ok
+            and self.search.ok
+            and (self.sandbox is None or self.sandbox.ok)
+        )
 
 
 class ReadyResponse(BaseModel):

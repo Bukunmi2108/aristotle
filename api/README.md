@@ -16,8 +16,8 @@ PostgreSQL service and reaches the search service over the internal network.
 aristotle-api
   /                 service metadata
   /healthz          process health
-  /readyz           model/search readiness
-  /services         model/search status
+  /readyz           model/search/workspace readiness
+  /services         model/search/workspace status
   /ws/chat          chat WebSocket
 
 primary inference provider
@@ -31,6 +31,10 @@ fallback aristotle-model
 aristotle-search
   /readyz
   /search
+
+aristotle-sandbox (private)
+  /readyz
+  /workspaces/{conversation_id}/*
 ```
 
 ## Agent Runtime

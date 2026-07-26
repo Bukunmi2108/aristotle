@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v6
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -45,9 +46,17 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "${{ secrets.CONTABO_VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+      - name: Upload deployment bootstrap
+        run: |
+          scp -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            api/deploy/deploy \
+            "${{ secrets.CONTABO_VPS_USER }}@${{ secrets.CONTABO_VPS_HOST }}:/opt/workspace/apps/aristotle-api/deploy.next"
       - name: Deploy exact commit to VPS
         run: |
           ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
             -o BatchMode=yes -o ConnectTimeout=15 \
             "${{ secrets.CONTABO_VPS_USER }}@${{ secrets.CONTABO_VPS_HOST }}" \
-            "/opt/workspace/apps/aristotle-api/deploy ${{ github.sha }}"
+            "install -m 0755 /opt/workspace/apps/aristotle-api/deploy.next /opt/workspace/apps/aristotle-api/deploy && \
+             rm /opt/workspace/apps/aristotle-api/deploy.next && \
+             /opt/workspace/apps/aristotle-api/deploy ${{ github.sha }}"

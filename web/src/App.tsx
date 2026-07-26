@@ -300,7 +300,11 @@ function App() {
           deadline = Date.now() + nextServices.wake_timeout_seconds * 1000;
         }
 
-        if (nextServices.model.ok && nextServices.search.ok) {
+        if (
+          nextServices.model.ok &&
+          nextServices.search.ok &&
+          (!nextServices.sandbox || nextServices.sandbox.ok)
+        ) {
           setServiceWakePhase("ready");
           return;
         }

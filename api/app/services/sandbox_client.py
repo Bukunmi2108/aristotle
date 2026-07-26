@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+from time import perf_counter
 from typing import Any, Awaitable, Callable
 
 import httpx
 
 from app.config import ApiSettings
+from app.models import ServiceStatus
 
 
 logger = logging.getLogger(__name__)
@@ -37,12 +39,33 @@ class SandboxClient:
     def _url(self, conversation_id: str, suffix: str = "") -> str:
         return f"{self.base_url}/workspaces/{conversation_id}{suffix}"
 
-    async def readyz(self) -> bool:
+    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        try:
+            return await self.http.request(method, url, **kwargs)
+        except httpx.HTTPError as exc:
+            raise SandboxError("Workspace service is unavailable.") from exc
+
+    async def status(self) -> ServiceStatus:
+        started = perf_counter()
         try:
             response = await self.http.get(f"{self.base_url}/readyz", timeout=5)
-            return response.status_code == 200
-        except httpx.HTTPError:
-            return False
+            response.raise_for_status()
+        except Exception:
+            return ServiceStatus(
+                ok=False,
+                service="sandbox",
+                url=self.base_url,
+                error="Workspace service is unavailable.",
+            )
+        return ServiceStatus(
+            ok=True,
+            service="sandbox",
+            url=self.base_url,
+            latency_ms=int((perf_counter() - started) * 1000),
+        )
+
+    async def readyz(self) -> bool:
+        return (await self.status()).ok
 
     async def exec(
         self, conversation_id: str, command: str, timeout_seconds: float | None = None
@@ -53,7 +76,8 @@ class SandboxClient:
         # Outlast the sandbox's own command timeout so the HTTP client doesn't
         # trip first on a slow-but-valid build.
         budget = (timeout_seconds or self.command_timeout) + 15
-        response = await self.http.post(
+        response = await self._request(
+            "POST",
             self._url(conversation_id, "/exec"),
             json=payload,
             headers=self._headers(),
@@ -76,27 +100,30 @@ class SandboxClient:
             payload["timeout_seconds"] = timeout_seconds
         budget = (timeout_seconds or self.command_timeout) + 15
         result: dict[str, Any] | None = None
-        async with self.http.stream(
-            "POST",
-            self._url(conversation_id, "/exec_stream"),
-            json=payload,
-            headers=self._headers(),
-            timeout=budget,
-        ) as response:
-            if response.status_code >= 400:
-                await response.aread()
-                _raise_for_status(response)
-            async for line in response.aiter_lines():
-                if not line.strip():
-                    continue
-                event = json.loads(line)
-                kind = event.get("type")
-                if kind == "result":
-                    result = event
-                elif kind == "error":
-                    raise SandboxError(event.get("message", "Command failed."))
-                else:
-                    await on_event(event)
+        try:
+            async with self.http.stream(
+                "POST",
+                self._url(conversation_id, "/exec_stream"),
+                json=payload,
+                headers=self._headers(),
+                timeout=budget,
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    _raise_for_status(response)
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    event = json.loads(line)
+                    kind = event.get("type")
+                    if kind == "result":
+                        result = event
+                    elif kind == "error":
+                        raise SandboxError(event.get("message", "Command failed."))
+                    else:
+                        await on_event(event)
+        except httpx.HTTPError as exc:
+            raise SandboxError("Workspace service is unavailable.") from exc
         if result is None:
             raise SandboxError("Command stream ended without a result.")
         return result
@@ -104,7 +131,8 @@ class SandboxClient:
     async def list_dir(
         self, conversation_id: str, path: str = "."
     ) -> list[dict[str, Any]]:
-        response = await self.http.get(
+        response = await self._request(
+            "GET",
             self._url(conversation_id, "/list"),
             params={"path": path},
             headers=self._headers(),
@@ -113,7 +141,8 @@ class SandboxClient:
         return _json_or_raise(response)["entries"]
 
     async def read_file(self, conversation_id: str, path: str) -> bytes:
-        response = await self.http.get(
+        response = await self._request(
+            "GET",
             self._url(conversation_id, "/file"),
             params={"path": path},
             headers=self._headers(),
@@ -125,7 +154,8 @@ class SandboxClient:
     async def write_file(
         self, conversation_id: str, path: str, data: bytes
     ) -> dict[str, Any]:
-        response = await self.http.put(
+        response = await self._request(
+            "PUT",
             self._url(conversation_id, "/file"),
             params={"path": path},
             content=data,
@@ -135,7 +165,8 @@ class SandboxClient:
         return _json_or_raise(response)
 
     async def make_dir(self, conversation_id: str, path: str) -> None:
-        response = await self.http.post(
+        response = await self._request(
+            "POST",
             self._url(conversation_id, "/mkdir"),
             json={"path": path},
             headers=self._headers(),
@@ -163,7 +194,8 @@ class SandboxClient:
         return _json_or_raise(response)
 
     async def move(self, conversation_id: str, src: str, dst: str) -> None:
-        response = await self.http.post(
+        response = await self._request(
+            "POST",
             self._url(conversation_id, "/move"),
             json={"src": src, "dst": dst},
             headers=self._headers(),
@@ -172,7 +204,7 @@ class SandboxClient:
         _json_or_raise(response)
 
     async def delete(self, conversation_id: str, path: str) -> None:
-        response = await self.http.request(
+        response = await self._request(
             "DELETE",
             self._url(conversation_id, "/file"),
             params={"path": path},
@@ -183,7 +215,7 @@ class SandboxClient:
 
     async def destroy(self, conversation_id: str) -> None:
         try:
-            response = await self.http.request(
+            response = await self._request(
                 "DELETE",
                 self._url(conversation_id),
                 headers=self._headers(),

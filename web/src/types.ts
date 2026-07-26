@@ -1,4 +1,4 @@
-export type ServiceName = "model" | "search";
+export type ServiceName = "model" | "search" | "sandbox";
 
 export type ServiceStatus = {
   ok: boolean;
@@ -12,6 +12,7 @@ export type ServiceStatus = {
 export type ServicesResponse = {
   model: ServiceStatus;
   search: ServiceStatus;
+  sandbox?: ServiceStatus | null;
   poll_interval_seconds?: number | null;
   wake_timeout_seconds?: number | null;
 };
