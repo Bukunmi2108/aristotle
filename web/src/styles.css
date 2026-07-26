@@ -2626,12 +2626,16 @@ input:focus-visible {
   position: relative;
   width: min(100%, 960px);
   overflow: hidden;
-  border-color: rgb(203 210 201 / 0.82);
+  border-color: rgb(190 201 192 / 0.46);
   border-radius: 4px;
-  background: #fffef9;
+  background: color-mix(
+    in srgb,
+    var(--workspace-preview-surface) 42%,
+    var(--surface)
+  );
   box-shadow:
-    0 1px 1px rgb(41 51 42 / 0.04),
-    0 18px 54px rgb(41 51 42 / 0.09);
+    0 1px 1px rgb(41 51 42 / 0.025),
+    0 12px 36px rgb(41 51 42 / 0.055);
   color: #202722;
   font-size: clamp(15.5px, 1.7cqi, 17px);
   line-height: 1.76;
