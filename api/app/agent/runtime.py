@@ -3,17 +3,21 @@ from time import perf_counter
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
+from pydantic_ai import AgentRunResultEvent
 from pydantic_ai.messages import (
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
     UserPromptPart,
 )
 
@@ -82,7 +86,9 @@ class AristotleAgentRuntime:
             final_parts: list[str] = []
             model_started = perf_counter()
             model_selection_sent = False
-            first_token_sent = False
+            first_model_event_sent = False
+            first_text_sent = False
+            active_tool_calls: dict[str, str] = {}
 
             await events.send(
                 "agent.started",
@@ -99,34 +105,60 @@ class AristotleAgentRuntime:
                 },
             )
 
-            async with agent.run_stream_events(
-                prompt,
-                message_history=_message_history(user_message),
-                deps=deps,
-                model_settings={"temperature": self.settings.agent_temperature},
-                conversation_id=user_message.conversation_id,
-            ) as stream:
-                async for event in stream:
-                    if trace.selected and not model_selection_sent:
-                        await _send_model_selection(events, trace)
-                        model_selection_sent = True
-
-                    if _has_stream_token(event) and not first_token_sent:
+            try:
+                async with agent.run_stream_events(
+                    prompt,
+                    message_history=_message_history(user_message),
+                    deps=deps,
+                    model_settings={"temperature": self.settings.agent_temperature},
+                    conversation_id=user_message.conversation_id,
+                ) as stream:
+                    async for event in stream:
                         if trace.selected and not model_selection_sent:
                             await _send_model_selection(events, trace)
                             model_selection_sent = True
-                        await events.send(
-                            "model.first_token",
-                            provider=trace.selected.provider if trace.selected else None,
-                            model=trace.selected.model if trace.selected else None,
-                            url=trace.selected.url if trace.selected else None,
-                            latency_ms=int((perf_counter() - model_started) * 1000),
-                        )
-                        first_token_sent = True
 
-                    text_delta = await self._handle_event(event, events)
-                    if text_delta:
-                        final_parts.append(text_delta)
+                        if _is_model_event(event) and not first_model_event_sent:
+                            if trace.selected and not model_selection_sent:
+                                await _send_model_selection(events, trace)
+                                model_selection_sent = True
+                            await events.send(
+                                "model.first_event",
+                                provider=(
+                                    trace.selected.provider if trace.selected else None
+                                ),
+                                model=trace.selected.model if trace.selected else None,
+                                url=trace.selected.url if trace.selected else None,
+                                latency_ms=int((perf_counter() - model_started) * 1000),
+                            )
+                            first_model_event_sent = True
+
+                        if _has_stream_token(event) and not first_text_sent:
+                            await events.send(
+                                "model.first_text",
+                                provider=(
+                                    trace.selected.provider if trace.selected else None
+                                ),
+                                model=trace.selected.model if trace.selected else None,
+                                url=trace.selected.url if trace.selected else None,
+                                latency_ms=int((perf_counter() - model_started) * 1000),
+                            )
+                            first_text_sent = True
+
+                        text_delta = await self._handle_event(
+                            event, events, active_tool_calls
+                        )
+                        if text_delta:
+                            final_parts.append(text_delta)
+            except Exception as exc:
+                for tool_call_id, tool_name in tuple(active_tool_calls.items()):
+                    await events.send(
+                        "tool.error",
+                        tool=tool_name,
+                        tool_call_id=tool_call_id,
+                        message=str(exc),
+                    )
+                raise
 
             if trace.selected and not model_selection_sent:
                 await _send_model_selection(events, trace)
@@ -173,13 +205,55 @@ class AristotleAgentRuntime:
             f"User message:\n{message}"
         )
 
-    async def _handle_event(self, event: Any, events: EventSender) -> str:
+    async def _handle_event(
+        self,
+        event: Any,
+        events: EventSender,
+        active_tool_calls: dict[str, str] | None = None,
+    ) -> str:
+        if isinstance(event, FunctionToolCallEvent):
+            if active_tool_calls is not None:
+                active_tool_calls[event.part.tool_call_id] = event.part.tool_name
+            await events.send(
+                "tool.started",
+                tool=event.part.tool_name,
+                tool_call_id=event.part.tool_call_id,
+                input=_tool_input(event.part),
+            )
+            return ""
+
         if isinstance(event, FunctionToolResultEvent):
+            if active_tool_calls is not None:
+                active_tool_calls.pop(event.part.tool_call_id, None)
+            if isinstance(event.part, RetryPromptPart):
+                await events.send(
+                    "tool.error",
+                    tool=event.part.tool_name,
+                    tool_call_id=event.part.tool_call_id,
+                    message=str(event.part.content),
+                )
+                return ""
             await events.send(
                 "tool.result",
                 tool=event.part.tool_name,
+                tool_call_id=event.part.tool_call_id,
                 result_count=_result_count(event.part.content),
                 result_preview=_result_preview(event.part.content),
+            )
+            return ""
+
+        if isinstance(event, AgentRunResultEvent):
+            usage = event.result.usage
+            await events.send(
+                "run.usage",
+                usage={
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_tokens": usage.cache_read_tokens,
+                    "cache_write_tokens": usage.cache_write_tokens,
+                    "requests": usage.requests,
+                    "tool_calls": usage.tool_calls,
+                },
             )
             return ""
 
@@ -199,6 +273,22 @@ class AristotleAgentRuntime:
                 return event.delta.content_delta
 
         return ""
+
+
+def _is_model_event(event: Any) -> bool:
+    if isinstance(event, FunctionToolCallEvent):
+        return True
+    return isinstance(event, PartStartEvent) and isinstance(
+        event.part, ThinkingPart | TextPart | ToolCallPart
+    )
+
+
+def _tool_input(part: ToolCallPart) -> dict[str, Any]:
+    if isinstance(part.args, dict):
+        return part.args
+    if isinstance(part.args, str) and part.args:
+        return {"raw": part.args}
+    return {}
 
 
 def _result_count(content: Any) -> int | None:
@@ -287,7 +377,10 @@ def _message_history(user_message: ClientUserMessage) -> list[ModelMessage]:
 
 def _result_preview(content: Any) -> list[dict[str, Any]] | None:
     if isinstance(content, SearchResponse):
-        return [_source_preview(result.model_dump(), status="searched") for result in content.results[:5]]
+        return [
+            _source_preview(result.model_dump(), status="searched")
+            for result in content.results[:5]
+        ]
 
     data = _as_dict(content)
     if not data:
@@ -351,7 +444,11 @@ def _is_fetch_result(data: dict[str, Any] | None) -> bool:
 def _is_failed_fetch_result(data: dict[str, Any]) -> bool:
     title = data.get("title")
     content = data.get("content")
-    return title is None and isinstance(content, str) and content.startswith("Fetch failed for ")
+    return (
+        title is None
+        and isinstance(content, str)
+        and content.startswith("Fetch failed for ")
+    )
 
 
 def _source_preview(item: dict[str, Any], *, status: str) -> dict[str, Any]:

@@ -1660,19 +1660,29 @@ function canRetryAssistantMessage(
 function messageMetricItems(metrics: ChatMessage["metrics"]) {
   if (!metrics) return [];
 
-  const estimatedPrefix = metrics.tokenSource === "estimated" ? "~" : "";
   return [
-    metrics.ttftMs !== null && metrics.ttftMs !== undefined
-      ? { label: "TTFT", value: formatDuration(metrics.ttftMs) }
+    metrics.firstModelLatencyMs !== null &&
+    metrics.firstModelLatencyMs !== undefined
+      ? { label: "MODEL", value: formatDuration(metrics.firstModelLatencyMs) }
       : null,
-    metrics.tps !== null && metrics.tps !== undefined
-      ? { label: "TPS", value: `${estimatedPrefix}${formatNumber(metrics.tps)}` }
+    metrics.firstTextLatencyMs !== null &&
+    metrics.firstTextLatencyMs !== undefined
+      ? { label: "TEXT", value: formatDuration(metrics.firstTextLatencyMs) }
+      : null,
+    metrics.inputTokens !== null && metrics.inputTokens !== undefined
+      ? { label: "IN", value: formatNumber(metrics.inputTokens) }
       : null,
     metrics.outputTokens !== null && metrics.outputTokens !== undefined
       ? {
-          label: "TOK",
-          value: `${estimatedPrefix}${formatNumber(metrics.outputTokens)}`,
+          label: "OUT",
+          value: formatNumber(metrics.outputTokens),
         }
+      : null,
+    metrics.modelRequests !== null && metrics.modelRequests !== undefined
+      ? { label: "REQ", value: formatNumber(metrics.modelRequests) }
+      : null,
+    metrics.toolCalls !== null && metrics.toolCalls !== undefined
+      ? { label: "TOOLS", value: formatNumber(metrics.toolCalls) }
       : null,
     metrics.durationMs !== null && metrics.durationMs !== undefined
       ? { label: "TIME", value: formatDuration(metrics.durationMs) }

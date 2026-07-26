@@ -170,7 +170,7 @@ def trace_from_events(events: list[dict[str, Any]]) -> ResearchRunTrace:
                     failed_source_count += 1
         if event_type == "tool.error":
             tool_error_count += 1
-        if event_type == "model.first_token" and isinstance(event.get("latency_ms"), int):
+        if event_type == "model.first_text" and isinstance(event.get("latency_ms"), int):
             first_token_latency_ms = event["latency_ms"]
         if event_type == "message.delta" and isinstance(event.get("text"), str):
             answer_parts.append(event["text"])

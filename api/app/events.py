@@ -14,7 +14,9 @@ EventType = Literal[
     "agent.started",
     "model.selected",
     "model.fallback",
-    "model.first_token",
+    "model.first_event",
+    "model.first_text",
+    "run.usage",
     "tool.started",
     "tool.result",
     "tool.error",
@@ -41,6 +43,7 @@ class Event(BaseModel):
     model: str | None = None
     url: str | None = None
     tool: str | None = None
+    tool_call_id: str | None = None
     input: dict[str, Any] | None = None
     result_count: int | None = None
     result_preview: list[dict[str, Any]] | None = None
@@ -51,6 +54,7 @@ class Event(BaseModel):
     code: str | None = None
     reason: str | None = None
     latency_ms: int | None = None
+    usage: dict[str, int] | None = None
     stream: str | None = None
     artifact_id: str | None = None
     path: str | None = None

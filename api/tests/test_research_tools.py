@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 
+from app.agent.capabilities.local_web import LocalWebTools
 from app.agent.capabilities.research import (
     RESEARCH_TOOL_NAMES,
     ResearchSource,
@@ -13,6 +14,7 @@ from app.agent.capabilities.research import (
     _extract_facts,
     _rank_source,
 )
+from app.models import SearchResponse
 
 
 class ResearchToolsHelpersTest(unittest.TestCase):
@@ -96,6 +98,36 @@ class ResearchToolsHelpersTest(unittest.TestCase):
         assert instructions is not None
         self.assertNotIn("fetch_many", instructions)
         self.assertIn("fetch_url", instructions)
+
+
+class SearchReadinessScopeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_search_tool_does_not_repeat_run_readiness_gate(self):
+        class SearchClient:
+            def __init__(self):
+                self.requests = []
+
+            async def is_ready(self):
+                raise AssertionError("readiness belongs to the run gate")
+
+            async def search(self, request):
+                self.requests.append(request)
+                return SearchResponse(query=request.query, results=[], metadata={})
+
+        search_client = SearchClient()
+        ctx = cast(
+            Any,
+            SimpleNamespace(
+                deps=SimpleNamespace(
+                    search_client=search_client,
+                    max_search_results=5,
+                )
+            ),
+        )
+
+        result = await LocalWebTools().search_web_impl(ctx, query="roman history")
+
+        self.assertEqual(result.query, "roman history")
+        self.assertEqual(len(search_client.requests), 1)
 
 
 if __name__ == "__main__":
