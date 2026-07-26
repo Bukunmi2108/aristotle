@@ -333,7 +333,46 @@ function TextPreview({ artifact }: { artifact: PresentedArtifact }) {
   if (artifact.mimeType === "text/markdown") {
     return (
       <article className="artifact-markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.text}</ReactMarkdown>
+        <div className="artifact-markdown__body">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: ({ href, title, children }) => (
+                <a
+                  href={href}
+                  title={title}
+                  target={href?.startsWith("http") ? "_blank" : undefined}
+                  rel={href?.startsWith("http") ? "noreferrer" : undefined}
+                >
+                  {children}
+                </a>
+              ),
+              table: ({ children }) => (
+                <div className="artifact-markdown__table-wrap">
+                  <table>{children}</table>
+                </div>
+              ),
+              img: ({ src, alt, title }) => (
+                <figure>
+                  <img src={src} alt={alt || ""} title={title} loading="lazy" />
+                  {title && <figcaption>{title}</figcaption>}
+                </figure>
+              ),
+              input: ({ type, checked }) =>
+                type === "checkbox" ? (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    readOnly
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
+                ) : null,
+            }}
+          >
+            {state.text}
+          </ReactMarkdown>
+        </div>
       </article>
     );
   }
