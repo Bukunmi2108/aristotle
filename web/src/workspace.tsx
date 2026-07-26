@@ -63,12 +63,6 @@ export function ArtifactPanel({
 
   if (!active) return null;
 
-  const label = active.title || fileName(active.path);
-  const meta = [
-    fileTypeLabel(active.mimeType),
-    active.sizeBytes !== undefined ? formatFileSize(active.sizeBytes) : null,
-  ].filter(Boolean);
-
   return (
     <dialog
       ref={dialogRef}
@@ -99,7 +93,9 @@ export function ArtifactPanel({
             <span aria-hidden="true">
               <ArtifactIcon mimeType={active.mimeType} />
             </span>
-            <h2 id="artifact-workspace-title">{label}</h2>
+            <h2 id="artifact-workspace-title">
+              {active.title || fileName(active.path)}
+            </h2>
           </div>
         )}
         <div className="artifact-workspace__actions">
@@ -139,7 +135,11 @@ export function ArtifactPanel({
       </div>
 
       <footer className="artifact-workspace__footer">
-        <p className="artifact-workspace__meta">{meta.join(" · ")}</p>
+        <p className="artifact-workspace__meta">
+          {fileTypeLabel(active.mimeType)}
+          {active.sizeBytes !== undefined &&
+            ` · ${formatFileSize(active.sizeBytes)}`}
+        </p>
         {versions.length > 1 && (
           <VersionStepper
             versions={versions}
