@@ -169,6 +169,26 @@ async def conversation_presentations(conversation_id: str) -> dict:
     return {"presentations": await store.list_presentations(conversation_id)}
 
 
+@app.get("/presentations/{presentation_id}/content")
+async def presentation_file(
+    presentation_id: str,
+    download: int = 0,
+) -> Response:
+    """Serve the immutable bytes captured when the agent presented a file."""
+    store = _require_store()
+    sandbox_client = _require_sandbox()
+    presentation = await store.get_presentation(presentation_id)
+    if presentation is None:
+        raise HTTPException(status_code=404, detail="Artifact is not available.")
+    path = presentation.get("snapshot_path") or presentation["path"]
+    return await _presented_file_response(
+        sandbox_client,
+        presentation,
+        path,
+        download=download,
+    )
+
+
 @app.get("/workspace/{conversation_id}/file")
 async def workspace_file(
     conversation_id: str,
@@ -186,19 +206,35 @@ async def workspace_file(
     presentation = await store.latest_presentation(conversation_id, path)
     if presentation is None:
         raise HTTPException(status_code=404, detail="File is not available.")
+    return await _presented_file_response(
+        sandbox_client,
+        presentation,
+        presentation.get("snapshot_path") or path,
+        download=download,
+    )
+
+
+async def _presented_file_response(
+    sandbox_client: SandboxClient,
+    presentation: dict,
+    read_path: str,
+    *,
+    download: int,
+) -> Response:
+    conversation_id = presentation["conversation_id"]
     try:
-        data = await sandbox_client.read_file(conversation_id, path)
+        data = await sandbox_client.read_file(conversation_id, read_path)
     except SandboxError as exc:
         raise HTTPException(status_code=404, detail="File is missing.") from exc
     except Exception as exc:
         # The path was presented, so an unexpected failure here is the sandbox
         # being unreachable — surface it as 502, don't disguise it as 404.
-        logger.exception("Failed to read presented workspace file %r", path)
+        logger.exception("Failed to read presented workspace file %r", read_path)
         raise HTTPException(
             status_code=502, detail="Workspace is temporarily unavailable."
         ) from exc
 
-    filename = path.rsplit("/", 1)[-1]
+    filename = presentation["path"].rsplit("/", 1)[-1].replace('"', "")
     disposition = "attachment" if download else "inline"
     return Response(
         content=data,

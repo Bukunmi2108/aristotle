@@ -9,6 +9,7 @@ from app.agent.capabilities.workspace import (
     _command_result,
     _exists,
     _node_fields,
+    _snapshot_path,
 )
 from app.services.sandbox_client import SandboxError
 
@@ -111,6 +112,12 @@ class WorkspaceHelpersTest(unittest.TestCase):
         node = {"name": "a", "path": "a", "type": "file", "size": 3, "mtime": 9.0}
         self.assertEqual(
             _node_fields(node), {"name": "a", "path": "a", "type": "file", "size": 3}
+        )
+
+    def test_snapshot_path_is_immutable_and_preserves_safe_filename(self):
+        self.assertEqual(
+            _snapshot_path("pres_123", "reports/final report.html"),
+            ".aristotle/presentations/pres_123/final report.html",
         )
 
 

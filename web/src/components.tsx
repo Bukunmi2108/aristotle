@@ -27,6 +27,7 @@ import remarkGfm from "remark-gfm";
 
 import { serviceSummary } from "./api";
 import { isDocumentSource, sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
+import { latestByPath } from "./workspaceUtils";
 import type {
   ChatMessage,
   Conversation,
@@ -37,6 +38,7 @@ import type {
   RunState,
   SourcePreview,
   ServicesResponse,
+  PresentedArtifact,
 } from "./types";
 
 const iconStroke = 1.8;
@@ -423,6 +425,8 @@ type MessageListProps = {
   onRetryMessage: (message: ChatMessage) => void;
   isRunning: boolean;
   onPickPrompt: (prompt: string) => void;
+  activeArtifactId: string | null;
+  onOpenArtifact: (artifact: PresentedArtifact, trigger: HTMLElement) => void;
 };
 
 type ConversationRouteStateProps = {
@@ -483,6 +487,8 @@ export function MessageList({
   onRetryMessage,
   isRunning,
   onPickPrompt,
+  activeArtifactId,
+  onOpenArtifact,
 }: MessageListProps) {
   return (
     <div className="message-scroll-shell">
@@ -503,6 +509,8 @@ export function MessageList({
                 index,
                 isRunning,
               )}
+              activeArtifactId={activeArtifactId}
+              onOpenArtifact={onOpenArtifact}
             />
           ))
         ) : (
@@ -665,6 +673,8 @@ function MessageBubble({
   onCopySources,
   onRetry,
   canRetry,
+  activeArtifactId,
+  onOpenArtifact,
 }: {
   message: ChatMessage;
   detailsOpen: Record<string, boolean>;
@@ -674,6 +684,8 @@ function MessageBubble({
   onCopySources: () => void | Promise<void>;
   onRetry: () => void;
   canRetry: boolean;
+  activeArtifactId: string | null;
+  onOpenArtifact: (artifact: PresentedArtifact, trigger: HTMLElement) => void;
 }) {
   const reasoning =
     message.parts?.filter((part) => part.type === "reasoning") ?? [];
@@ -756,6 +768,14 @@ function MessageBubble({
           {message.status === "streaming" && <span className="stream-caret" />}
         </div>
 
+        {message.artifacts?.length ? (
+          <MessageArtifacts
+            artifacts={message.artifacts}
+            activeArtifactId={activeArtifactId}
+            onOpenArtifact={onOpenArtifact}
+          />
+        ) : null}
+
         {showFooter && (
           <MessageFooter
             message={message}
@@ -769,6 +789,55 @@ function MessageBubble({
         )}
       </div>
     </article>
+  );
+}
+
+function MessageArtifacts({
+  artifacts,
+  activeArtifactId,
+  onOpenArtifact,
+}: {
+  artifacts: PresentedArtifact[];
+  activeArtifactId: string | null;
+  onOpenArtifact: (artifact: PresentedArtifact, trigger: HTMLElement) => void;
+}) {
+  const files = latestByPath(artifacts);
+  return (
+    <section className="message-artifacts" aria-label="Artifacts created in this response">
+      {files.map((artifact) => {
+        const selected = artifact.id === activeArtifactId;
+        const meta = [
+          fileTypeLabel(artifact.mimeType),
+          artifact.sizeBytes !== undefined ? formatFileSize(artifact.sizeBytes) : null,
+          artifact.version > 1 ? `Version ${artifact.version}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <button
+            key={artifact.id}
+            type="button"
+            className={cx(
+              "message-artifact",
+              selected && "message-artifact--active",
+            )}
+            aria-pressed={selected}
+            onClick={(event) => onOpenArtifact(artifact, event.currentTarget)}
+          >
+            <span className="message-artifact__icon" aria-hidden="true">
+              <FileText size={17} strokeWidth={iconStroke} />
+            </span>
+            <span className="message-artifact__body">
+              <strong>{artifact.title || artifact.path.split("/").pop()}</strong>
+              <small>{meta || "Artifact"}</small>
+            </span>
+            <span className="message-artifact__open" aria-hidden="true">
+              <ExternalLink size={15} strokeWidth={iconStroke} />
+            </span>
+          </button>
+        );
+      })}
+    </section>
   );
 }
 

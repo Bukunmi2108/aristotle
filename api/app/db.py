@@ -152,14 +152,22 @@ create index if not exists workspace_runs_conversation_idx on workspace_runs(con
 create table if not exists presentations (
   id text primary key,
   conversation_id text not null references conversations(id) on delete cascade,
+  message_id text references messages(id) on delete cascade,
   path text not null,
+  snapshot_path text,
   mime_type text not null,
   title text,
+  size_bytes bigint,
   version integer not null,
   created_at timestamptz not null
 );
 
+alter table presentations add column if not exists message_id text references messages(id) on delete cascade;
+alter table presentations add column if not exists snapshot_path text;
+alter table presentations add column if not exists size_bytes bigint;
+
 create index if not exists presentations_conversation_idx on presentations(conversation_id, created_at);
+create index if not exists presentations_message_idx on presentations(message_id, created_at);
 create unique index if not exists presentations_version_uq on presentations(conversation_id, path, version);
 """
 
@@ -399,6 +407,24 @@ class PersistenceStore:
 
         for message in messages:
             message["attachments"] = attachments_by_message.get(message["id"], [])
+        presentation_rows = await self.pool.fetch(
+            """
+            select id, conversation_id, message_id, path, snapshot_path, mime_type,
+                   title, size_bytes, version, created_at
+            from presentations
+            where message_id = any($1::text[])
+            order by created_at asc
+            """,
+            message_ids,
+        )
+        presentations_by_message: dict[str, list[dict[str, Any]]] = {}
+        for row in presentation_rows:
+            record = _record_to_dict(row)
+            message_id = record.get("message_id")
+            if message_id:
+                presentations_by_message.setdefault(message_id, []).append(record)
+        for message in messages:
+            message["presentations"] = presentations_by_message.get(message["id"], [])
         return messages
 
     async def list_events(
@@ -684,9 +710,12 @@ class PersistenceStore:
         *,
         presentation_id: str,
         conversation_id: str,
+        message_id: str | None,
         path: str,
+        snapshot_path: str,
         mime_type: str,
         title: str | None,
+        size_bytes: int,
     ) -> dict[str, Any]:
         # Version is per (conversation, path): re-presenting the same file bumps
         # its version so the panel can step through history in place.
@@ -695,19 +724,24 @@ class PersistenceStore:
             with next as (
               select coalesce(max(version), 0) + 1 as version
               from presentations
-              where conversation_id = $2 and path = $3
+              where conversation_id = $2 and path = $4
             )
             insert into presentations (
-              id, conversation_id, path, mime_type, title, version, created_at
+              id, conversation_id, message_id, path, snapshot_path, mime_type,
+              title, size_bytes, version, created_at
             )
-            select $1, $2, $3, $4, $5, next.version, $6 from next
-            returning id, conversation_id, path, mime_type, title, version, created_at
+            select $1, $2, $3, $4, $5, $6, $7, $8, next.version, $9 from next
+            returning id, conversation_id, message_id, path, snapshot_path,
+                      mime_type, title, size_bytes, version, created_at
             """,
             presentation_id,
             conversation_id,
+            message_id,
             path,
+            snapshot_path,
             mime_type,
             title,
+            size_bytes,
             _now(),
         )
         return _record_to_dict(row)
@@ -715,7 +749,8 @@ class PersistenceStore:
     async def list_presentations(self, conversation_id: str) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
             """
-            select id, conversation_id, path, mime_type, title, version, created_at
+            select id, conversation_id, message_id, path, snapshot_path, mime_type,
+                   title, size_bytes, version, created_at
             from presentations
             where conversation_id = $1
             order by created_at asc
@@ -724,12 +759,27 @@ class PersistenceStore:
         )
         return [_record_to_dict(row) for row in rows]
 
+    async def get_presentation(
+        self, presentation_id: str
+    ) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            """
+            select id, conversation_id, message_id, path, snapshot_path, mime_type,
+                   title, size_bytes, version, created_at
+            from presentations
+            where id = $1
+            """,
+            presentation_id,
+        )
+        return _record_to_dict(row) if row is not None else None
+
     async def latest_presentation(
         self, conversation_id: str, path: str
     ) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(
             """
-            select id, conversation_id, path, mime_type, title, version, created_at
+            select id, conversation_id, message_id, path, snapshot_path, mime_type,
+                   title, size_bytes, version, created_at
             from presentations
             where conversation_id = $1 and path = $2
             order by version desc

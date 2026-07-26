@@ -233,13 +233,22 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             artifact_id = f"pres_{uuid4().hex}"
             version = 1
             store = ctx.deps.document_store
+            try:
+                data = await workspace.read_file(path)
+                snapshot_path = _snapshot_path(artifact_id, path)
+                await workspace.write_file(snapshot_path, data)
+            except SandboxError as exc:
+                await _fail(ctx, "present_file", str(exc))
             if store is not None:
                 record = await store.create_presentation(
                     presentation_id=artifact_id,
                     conversation_id=workspace.conversation_id,
+                    message_id=ctx.deps.events.message_id,
                     path=path,
+                    snapshot_path=snapshot_path,
                     mime_type=mime_type,
                     title=title,
+                    size_bytes=len(data),
                 )
                 artifact_id = record["id"]
                 version = record["version"]
@@ -250,6 +259,7 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
                 mime_type=mime_type,
                 title=title,
                 version=version,
+                size_bytes=len(data),
             )
             return PresentResult(
                 path=path, title=title, mime_type=mime_type, version=version
@@ -361,3 +371,9 @@ def _node_fields(node: dict) -> dict:
         "type": node["type"],
         "size": node["size"],
     }
+
+
+def _snapshot_path(presentation_id: str, path: str) -> str:
+    """Return a presentation-owned path so later source edits cannot rewrite history."""
+    filename = posixpath.basename(path.strip("/")) or "artifact"
+    return f".aristotle/presentations/{presentation_id}/{filename}"

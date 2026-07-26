@@ -22,3 +22,23 @@ export function routeFromPath(pathname: string): AppRoute {
 export function pathForConversation(id: string): string {
   return `/c/${id}`;
 }
+
+export function artifactIdFromLocation(location: string): string | null {
+  const query = location.includes("?") ? location.slice(location.indexOf("?")) : location;
+  return new URLSearchParams(query).get("artifact");
+}
+
+export function urlForArtifact(
+  conversationId: string,
+  artifactId: string | null,
+  currentSearch = "",
+): string {
+  const params = new URLSearchParams(currentSearch);
+  if (artifactId) {
+    params.set("artifact", artifactId);
+  } else {
+    params.delete("artifact");
+  }
+  const query = params.toString();
+  return `${pathForConversation(conversationId)}${query ? `?${query}` : ""}`;
+}

@@ -43,6 +43,21 @@ export function workspaceFileUrl(
   )}/file?${params.toString()}`;
 }
 
+export function presentationContentUrl(
+  presentationId: string,
+  options: { download?: boolean; preview?: boolean } = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.download) {
+    params.set("download", "1");
+  }
+  const base = options.preview ? previewBaseUrl : agentHttpBaseUrl;
+  const query = params.toString();
+  return `${base}/presentations/${encodeURIComponent(presentationId)}/content${
+    query ? `?${query}` : ""
+  }`;
+}
+
 export async function fetchPresentations(
   conversationId: string,
 ): Promise<PresentedArtifact[]> {
@@ -61,6 +76,9 @@ export async function fetchPresentations(
       mime_type: string;
       title?: string | null;
       version: number;
+      message_id?: string | null;
+      created_at?: string;
+      size_bytes?: number;
     }>;
   };
   return payload.presentations.map((item) => ({
@@ -69,6 +87,9 @@ export async function fetchPresentations(
     mimeType: item.mime_type,
     title: item.title,
     version: item.version,
+    messageId: item.message_id,
+    createdAt: item.created_at,
+    sizeBytes: item.size_bytes,
   }));
 }
 

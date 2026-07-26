@@ -57,6 +57,7 @@ class Event(BaseModel):
     mime_type: str | None = None
     title: str | None = None
     version: int | None = None
+    size_bytes: int | None = None
 
 
 class EventSender:
@@ -80,6 +81,10 @@ class EventSender:
     @property
     def run_id(self) -> str | None:
         return self._run_id
+
+    @property
+    def message_id(self) -> str | None:
+        return self._message_id
 
     async def send(self, event_type: EventType, **kwargs: Any) -> None:
         async with self._lock:

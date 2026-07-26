@@ -28,7 +28,10 @@ import {
   ServiceAlert,
 } from "./components";
 import { ArtifactPanel } from "./workspace";
-import { presentedFromEvent } from "./workspaceUtils";
+import {
+  mergePresentations,
+  presentedFromEvent,
+} from "./workspaceUtils";
 import {
   createConversation,
   loadConversations,
@@ -40,7 +43,12 @@ import {
   normalizeSourcePreview,
   sourcesFromMessage,
 } from "./sourceUtils";
-import { pathForConversation, routeFromPath } from "./urlSync";
+import {
+  artifactIdFromLocation,
+  pathForConversation,
+  routeFromPath,
+  urlForArtifact,
+} from "./urlSync";
 import type {
   ChatHistoryMessage,
   ChatMessage,
@@ -90,8 +98,9 @@ function App() {
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifacts, setArtifacts] = useState<PresentedArtifact[]>([]);
-  const [activeArtifactPath, setActiveArtifactPath] = useState<string | null>(null);
+  const [activeArtifactId, setActiveArtifactId] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const artifactTriggerRef = useRef<HTMLElement | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<FileRecord[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -218,10 +227,10 @@ function App() {
           return;
         }
         setArtifacts(presented);
-        setActiveArtifactPath(
-          presented.length > 0 ? presented[presented.length - 1].path : null,
-        );
-        setPanelOpen(false);
+        const requestedId = artifactIdFromLocation(window.location.href);
+        const requested = presented.find((artifact) => artifact.id === requestedId);
+        setActiveArtifactId(requested?.id ?? null);
+        setPanelOpen(Boolean(requested));
       })
       .catch((error) => {
         if (cancelled) {
@@ -230,7 +239,7 @@ function App() {
         // Empty history returns [] (200), so reaching here is a real failure.
         console.error("Failed to load presentations", error);
         setArtifacts([]);
-        setActiveArtifactPath(null);
+        setActiveArtifactId(null);
         setPanelOpen(false);
       });
     return () => {
@@ -415,6 +424,8 @@ function App() {
     setFileError(null);
     setRunState("idle");
     setSidebarOpen(false);
+    setPanelOpen(false);
+    setActiveArtifactId(null);
   }
 
   function retryCurrentRoute() {
@@ -802,9 +813,25 @@ function App() {
     if (event.type === "workspace.present") {
       const artifact = presentedFromEvent(event);
       if (artifact) {
-        setArtifacts((prev) => [...prev, artifact]);
-        setActiveArtifactPath(artifact.path);
+        setArtifacts((prev) => mergePresentations(prev, artifact));
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          messages: conversation.messages.map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  artifacts: mergePresentations(message.artifacts || [], artifact),
+                }
+              : message,
+          ),
+        }));
+        setActiveArtifactId(artifact.id);
         setPanelOpen(true);
+        window.history.replaceState(
+          null,
+          "",
+          urlForArtifact(conversationId, artifact.id, window.location.search),
+        );
       }
       return;
     }
@@ -1201,8 +1228,42 @@ function App() {
     runState === "warming" ||
     runState === "streaming";
 
+  function openArtifact(artifact: PresentedArtifact, trigger: HTMLElement) {
+    if (!activeId) return;
+    artifactTriggerRef.current = trigger;
+    setActiveArtifactId(artifact.id);
+    setPanelOpen(true);
+    window.history.pushState(
+      null,
+      "",
+      urlForArtifact(activeId, artifact.id, window.location.search),
+    );
+  }
+
+  function selectArtifact(artifactId: string) {
+    if (!activeId) return;
+    setActiveArtifactId(artifactId);
+    window.history.replaceState(
+      null,
+      "",
+      urlForArtifact(activeId, artifactId, window.location.search),
+    );
+  }
+
+  function closeArtifact() {
+    if (!activeId) return;
+    setPanelOpen(false);
+    setActiveArtifactId(null);
+    window.history.pushState(
+      null,
+      "",
+      urlForArtifact(activeId, null, window.location.search),
+    );
+    window.requestAnimationFrame(() => artifactTriggerRef.current?.focus());
+  }
+
   return (
-    <main className="app-root">
+    <main className={panelOpen ? "app-root app-root--artifact-open" : "app-root"}>
       <HistorySidebar
         isOpen={sidebarOpen}
         conversations={conversations}
@@ -1256,6 +1317,8 @@ function App() {
               onRetryMessage={retryMessage}
               isRunning={isRunning}
               onPickPrompt={setComposer}
+              activeArtifactId={activeArtifactId}
+              onOpenArtifact={openArtifact}
             />
 
             <Composer
@@ -1280,21 +1343,11 @@ function App() {
       </section>
       {activeId && panelOpen && artifacts.length > 0 && (
         <ArtifactPanel
-          conversationId={activeId}
           artifacts={artifacts}
-          activePath={activeArtifactPath}
-          onSelectPath={setActiveArtifactPath}
-          onClose={() => setPanelOpen(false)}
+          activeId={activeArtifactId}
+          onSelect={selectArtifact}
+          onClose={closeArtifact}
         />
-      )}
-      {activeId && !panelOpen && artifacts.length > 0 && (
-        <button
-          type="button"
-          className="artifact-reopen"
-          onClick={() => setPanelOpen(true)}
-        >
-          Artifacts
-        </button>
       )}
     </main>
   );
@@ -1478,6 +1531,16 @@ function messageFromServer(message: StoredMessage): ChatMessage {
     createdAt: message.created_at,
     status,
     attachments: message.attachments ?? [],
+    artifacts: (message.presentations ?? []).map((artifact) => ({
+      id: artifact.id,
+      path: artifact.path,
+      mimeType: artifact.mime_type,
+      title: artifact.title,
+      version: artifact.version,
+      messageId: artifact.message_id,
+      createdAt: artifact.created_at,
+      sizeBytes: artifact.size_bytes,
+    })),
     metrics,
     parts:
       message.role === "assistant" && content

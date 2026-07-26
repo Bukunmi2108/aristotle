@@ -2,7 +2,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from app.main import app, workspace_file
+from app.main import app, presentation_file, workspace_file
 from app.services.sandbox_client import SandboxError
 
 
@@ -13,6 +13,10 @@ class FakeStore:
 
     async def latest_presentation(self, conversation_id, path):
         self.calls.append((conversation_id, path))
+        return self._presentation
+
+    async def get_presentation(self, presentation_id):
+        self.calls.append(("presentation", presentation_id))
         return self._presentation
 
 
@@ -28,7 +32,14 @@ class FakeSandbox:
 
 
 def _presentation(mime="text/plain"):
-    return {"path": "report.txt", "mime_type": mime, "version": 1}
+    return {
+        "id": "pres_1",
+        "conversation_id": "conv1",
+        "path": "report.txt",
+        "snapshot_path": ".aristotle/presentations/pres_1/report.txt",
+        "mime_type": mime,
+        "version": 1,
+    }
 
 
 class WorkspaceFileEndpointTest(unittest.IsolatedAsyncioTestCase):
@@ -75,6 +86,23 @@ class WorkspaceFileEndpointTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as ctx:
             await workspace_file("conv1", "report.txt")
         self.assertEqual(ctx.exception.status_code, 502)
+
+    async def test_presentation_endpoint_reads_immutable_snapshot(self):
+        sandbox = FakeSandbox(data=b"snapshot")
+        store = FakeStore(_presentation("text/html"))
+        self._configure(store, sandbox)
+        response = await presentation_file("pres_1")
+        self.assertEqual(response.body, b"snapshot")
+        self.assertEqual(store.calls, [("presentation", "pres_1")])
+
+    async def test_presentation_endpoint_rejects_missing_record_without_sandbox_read(self):
+        sandbox = FakeSandbox(
+            error=AssertionError("must not read an unknown presentation")
+        )
+        self._configure(FakeStore(None), sandbox)
+        with self.assertRaises(HTTPException) as ctx:
+            await presentation_file("missing")
+        self.assertEqual(ctx.exception.status_code, 404)
 
 
 if __name__ == "__main__":

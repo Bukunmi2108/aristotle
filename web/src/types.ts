@@ -34,6 +34,16 @@ export type StoredMessage = {
   created_at: string;
   completed_at?: string | null;
   attachments?: MessageAttachment[];
+  presentations?: Array<{
+    id: string;
+    path: string;
+    mime_type: string;
+    title?: string | null;
+    version: number;
+    message_id?: string | null;
+    created_at?: string;
+    size_bytes?: number;
+  }>;
 };
 
 export type StoredConversationsResponse = {
@@ -159,10 +169,13 @@ export type ServerEvent = {
   latency_ms?: number | null;
   stream?: "stdout" | "stderr" | string;
   artifact_id?: string;
+  message_id?: string;
   path?: string;
   mime_type?: string;
   title?: string | null;
   version?: number;
+  created_at?: string;
+  size_bytes?: number;
 };
 
 export type PresentedArtifact = {
@@ -171,6 +184,9 @@ export type PresentedArtifact = {
   mimeType: string;
   title?: string | null;
   version: number;
+  messageId?: string | null;
+  createdAt?: string;
+  sizeBytes?: number;
 };
 
 export type MessageRole = "user" | "assistant";
@@ -208,6 +224,7 @@ export type ChatMessage = {
   createdAt: string;
   status?: "streaming" | "complete" | "error" | "stopped";
   attachments?: MessageAttachment[];
+  artifacts?: PresentedArtifact[];
   parts?: MessagePart[];
   sources?: SourcePreview[];
   metrics?: MessageMetrics;
