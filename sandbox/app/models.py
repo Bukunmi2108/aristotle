@@ -41,6 +41,19 @@ class MoveRequest(BaseModel):
     dst: str = Field(min_length=1, max_length=4096)
 
 
+class ExportDocumentRequest(BaseModel):
+    source_path: str = Field(min_length=1, max_length=4096)
+    output_path: str = Field(min_length=1, max_length=4096)
+    title: str | None = Field(default=None, max_length=200)
+
+
+class ExportDocumentResponse(BaseModel):
+    source_path: str
+    output_path: str
+    mime_type: Literal["application/pdf"] = "application/pdf"
+    size: int
+
+
 class OkResponse(BaseModel):
     ok: bool = True
 

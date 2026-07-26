@@ -39,10 +39,17 @@ async def chat_websocket(websocket: WebSocket) -> None:
         user_message_id = f"msg_{uuid4().hex}"
         assistant_message_id = f"msg_{uuid4().hex}"
 
-        if store is None and user_message.options.file_ids:
+        if store is None and (
+            user_message.options.file_ids or user_message.active_artifact_id
+        ):
             raise DocumentScopeError("Document persistence is not configured.")
 
         if store is not None:
+            await _validate_active_artifact(
+                store,
+                conversation_id,
+                user_message.active_artifact_id,
+            )
             await store.ensure_conversation(
                 conversation_id,
                 _conversation_title(user_message.message),
@@ -254,4 +261,18 @@ async def _validate_attached_files(
     if unparsed:
         raise DocumentScopeError(
             "File is not ready for document tools: " + ", ".join(unparsed)
+        )
+
+
+async def _validate_active_artifact(
+    store: PersistenceStore,
+    conversation_id: str,
+    artifact_id: str | None,
+) -> None:
+    if artifact_id is None:
+        return
+    artifact = await store.get_presentation(artifact_id)
+    if artifact is None or artifact["conversation_id"] != conversation_id:
+        raise DocumentScopeError(
+            "Artifact does not belong to this conversation: " + artifact_id
         )

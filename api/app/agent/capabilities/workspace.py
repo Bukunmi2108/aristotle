@@ -4,7 +4,7 @@ import logging
 import mimetypes
 import posixpath
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import Literal, NoReturn
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ WORKSPACE_TOOL_NAMES = {
     "move_path",
     "delete_path",
     "present_file",
+    "export_document",
 }
 MAX_READ_CHARS = 20_000
 
@@ -78,6 +79,11 @@ class PresentResult(BaseModel):
     version: int
 
 
+class ExportDocumentResult(BaseModel):
+    source_path: str
+    artifacts: list[PresentResult]
+
+
 @dataclass
 class WorkspaceTools(AbstractCapability[AgentDeps]):
     def get_instructions(self):
@@ -100,7 +106,11 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
                 "— call present_file to show it in the side panel. Prefer answering "
                 "inline; only present substantial finished artifacts, not scratch or "
                 "intermediate files, and present one at a time. Presenting the same "
-                "path again updates it in place as a new version."
+                "path again updates it in place as a new version. For format-only "
+                "follow-ups, reuse the existing workspace file without researching "
+                "again. Use export_document for Markdown/PDF requests; it converts "
+                "and presents every requested format, so do not separately call "
+                "present_file for those outputs."
             )
 
         return instructions
@@ -110,7 +120,9 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
 
         @toolset.tool(name="run_command", strict=False)
         async def run_command(
-            ctx: RunContext[AgentDeps], command: str, timeout_seconds: float | None = None
+            ctx: RunContext[AgentDeps],
+            command: str,
+            timeout_seconds: float | None = None,
         ) -> CommandResult:
             """Run a shell command in the conversation workspace."""
             return await _exec(ctx, command, timeout_seconds)
@@ -150,7 +162,9 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
                 await _fail(ctx, "read_workspace_file", str(exc))
             text = data.decode(errors="replace")
             truncated = len(text) > MAX_READ_CHARS
-            return FileContent(path=path, content=text[:MAX_READ_CHARS], truncated=truncated)
+            return FileContent(
+                path=path, content=text[:MAX_READ_CHARS], truncated=truncated
+            )
 
         @toolset.tool(name="write_file", strict=False)
         async def write_file(
@@ -195,45 +209,52 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
             ctx: RunContext[AgentDeps], path: str, title: str | None = None
         ) -> PresentResult:
             """Show a finished workspace file to the user in the side panel."""
+            return await _present(ctx, path, title, tool="present_file")
+
+        @toolset.tool(name="export_document", strict=False)
+        async def export_document(
+            ctx: RunContext[AgentDeps],
+            source_path: str,
+            formats: list[Literal["markdown", "pdf"]],
+            title: str | None = None,
+        ) -> ExportDocumentResult:
+            """Reuse a Markdown file, export requested formats, and present every output."""
+            requested = list(dict.fromkeys(formats))
+            if not requested:
+                await _fail(ctx, "export_document", "At least one format is required.")
             workspace = _workspace(ctx)
-            if not await _exists(workspace, path):
+            if not await _exists(workspace, source_path):
                 await _fail(
-                    ctx, "present_file", f"Cannot present '{path}': not found in workspace."
+                    ctx,
+                    "export_document",
+                    f"Cannot export '{source_path}': not found in workspace.",
                 )
-            mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-            artifact_id = f"pres_{uuid4().hex}"
-            version = 1
-            store = ctx.deps.document_store
-            try:
-                data = await workspace.read_file(path)
-                snapshot_path = _snapshot_path(artifact_id, path)
-                await workspace.write_file(snapshot_path, data)
-            except SandboxError as exc:
-                await _fail(ctx, "present_file", str(exc))
-            if store is not None:
-                record = await store.create_presentation(
-                    presentation_id=artifact_id,
-                    conversation_id=workspace.conversation_id,
-                    message_id=ctx.deps.events.message_id,
-                    path=path,
-                    snapshot_path=snapshot_path,
-                    mime_type=mime_type,
-                    title=title,
-                    size_bytes=len(data),
+            suffix = posixpath.splitext(source_path)[1].lower()
+            if suffix not in {".md", ".markdown"}:
+                await _fail(
+                    ctx,
+                    "export_document",
+                    "PDF export currently supports Markdown source files only.",
                 )
-                artifact_id = record["id"]
-                version = record["version"]
-            await ctx.deps.events.send(
-                "workspace.present",
-                artifact_id=artifact_id,
-                path=path,
-                mime_type=mime_type,
-                title=title,
-                version=version,
-                size_bytes=len(data),
-            )
-            return PresentResult(
-                path=path, title=title, mime_type=mime_type, version=version
+
+            output_paths: list[str] = []
+            if "markdown" in requested:
+                output_paths.append(source_path)
+            if "pdf" in requested:
+                pdf_path = posixpath.splitext(source_path)[0] + ".pdf"
+                try:
+                    await workspace.export_document(source_path, pdf_path, title)
+                except SandboxError as exc:
+                    await _fail(ctx, "export_document", str(exc))
+                output_paths.append(pdf_path)
+
+            artifacts = [
+                await _present(ctx, path, title, tool="export_document")
+                for path in output_paths
+            ]
+            return ExportDocumentResult(
+                source_path=source_path,
+                artifacts=artifacts,
             )
 
         return toolset
@@ -246,6 +267,51 @@ class WorkspaceTools(AbstractCapability[AgentDeps]):
         if ctx.deps.workspace_tools_enabled:
             return tool_defs
         return [tool for tool in tool_defs if tool.name not in WORKSPACE_TOOL_NAMES]
+
+
+async def _present(
+    ctx: RunContext[AgentDeps],
+    path: str,
+    title: str | None,
+    *,
+    tool: str,
+) -> PresentResult:
+    workspace = _workspace(ctx)
+    if not await _exists(workspace, path):
+        await _fail(ctx, tool, f"Cannot present '{path}': not found in workspace.")
+    mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    artifact_id = f"pres_{uuid4().hex}"
+    version = 1
+    store = ctx.deps.document_store
+    try:
+        data = await workspace.read_file(path)
+        snapshot_path = _snapshot_path(artifact_id, path)
+        await workspace.write_file(snapshot_path, data)
+    except SandboxError as exc:
+        await _fail(ctx, tool, str(exc))
+    if store is not None:
+        record = await store.create_presentation(
+            presentation_id=artifact_id,
+            conversation_id=workspace.conversation_id,
+            message_id=ctx.deps.events.message_id,
+            path=path,
+            snapshot_path=snapshot_path,
+            mime_type=mime_type,
+            title=title,
+            size_bytes=len(data),
+        )
+        artifact_id = record["id"]
+        version = record["version"]
+    await ctx.deps.events.send(
+        "workspace.present",
+        artifact_id=artifact_id,
+        path=path,
+        mime_type=mime_type,
+        title=title,
+        version=version,
+        size_bytes=len(data),
+    )
+    return PresentResult(path=path, title=title, mime_type=mime_type, version=version)
 
 
 def _workspace(ctx: RunContext[AgentDeps]) -> Workspace:
@@ -314,7 +380,9 @@ async def _record_run(
         )
     except Exception:
         logger.warning(
-            "workspace run audit failed for %s", workspace.conversation_id, exc_info=True
+            "workspace run audit failed for %s",
+            workspace.conversation_id,
+            exc_info=True,
         )
 
 

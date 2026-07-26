@@ -31,6 +31,7 @@ All `/workspaces/*` routes require `Authorization: Bearer <SANDBOX_AUTH_TOKEN>`.
 GET    /healthz                              process liveness
 GET    /readyz                               workspace root writable
 POST   /workspaces/{cid}/exec                run a command, return result
+POST   /workspaces/{cid}/export              export Markdown to a validated PDF
 GET    /workspaces/{cid}/list?path=          list a directory
 GET    /workspaces/{cid}/file?path=          read a file (bytes)
 PUT    /workspaces/{cid}/file?path=          write a file (raw body)

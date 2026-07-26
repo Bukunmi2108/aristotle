@@ -65,6 +65,7 @@ class ClientUserMessage(BaseModel):
         default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
     )
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=24)
+    active_artifact_id: str | None = Field(default=None, pattern=r"^pres_[A-Za-z0-9]+$")
     options: ChatOptions = Field(default_factory=ChatOptions)
 
 
