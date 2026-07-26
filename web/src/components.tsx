@@ -26,6 +26,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { serviceSummary } from "./api";
+import {
+  MAX_PROMPT_LENGTH,
+  insertPastedText,
+  promptCharactersRemaining,
+  shouldSubmitComposerKey,
+} from "./composerUtils";
 import { isDocumentSource, sameSourceUrl, sourcesFromMessage } from "./sourceUtils";
 import { latestByPath } from "./workspaceUtils";
 import type {
@@ -537,6 +543,7 @@ type ComposerProps = {
   isRunning: boolean;
   attachedFiles: FileRecord[];
   fileError: string | null;
+  isUploadingFile: boolean;
   setComposer: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onStop: () => void;
@@ -549,6 +556,7 @@ export function Composer({
   isRunning,
   attachedFiles,
   fileError,
+  isUploadingFile,
   setComposer,
   onSubmit,
   onStop,
@@ -556,9 +564,27 @@ export function Composer({
   onRemoveFile,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const charactersRemaining = promptCharactersRemaining(composer);
+  const showCharacterCount = charactersRemaining <= 1_200;
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const maxComposerHeight = Math.min(360, window.innerHeight * 0.4);
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(
+      textarea.scrollHeight,
+      maxComposerHeight,
+    )}px`;
+  }, [composer]);
 
   return (
-    <form className="composer" onSubmit={onSubmit}>
+    <form
+      className="composer"
+      onSubmit={onSubmit}
+      aria-busy={isUploadingFile || isRunning}
+    >
       {attachedFiles.length > 0 && (
         <div className="composer-files" aria-label="Attached files">
           {attachedFiles.map((file) => (
@@ -577,6 +603,7 @@ export function Composer({
                 type="button"
                 onClick={() => onRemoveFile(file.id)}
                 title={`Remove ${file.filename}`}
+                aria-label={`Remove ${file.filename}`}
                 disabled={isRunning}
               >
                 <X size={12} strokeWidth={iconStroke} />
@@ -585,16 +612,30 @@ export function Composer({
           ))}
         </div>
       )}
-      {fileError && <div className="composer-file-error">{fileError}</div>}
+      {fileError && (
+        <div className="composer-file-error" role="alert">
+          {fileError}
+        </div>
+      )}
       <div className="composer__input-row">
         <button
           className="composer-tool-button"
           type="button"
           onClick={() => fileInputRef.current?.click()}
           title="Attach file"
-          disabled={isRunning}
+          aria-label={isUploadingFile ? "Uploading file" : "Attach file"}
+          disabled={isRunning || isUploadingFile}
         >
-          <Paperclip size={17} strokeWidth={iconStroke} />
+          {isUploadingFile ? (
+            <Loader2
+              className="composer-upload-spinner"
+              size={17}
+              strokeWidth={iconStroke}
+              aria-hidden="true"
+            />
+          ) : (
+            <Paperclip size={17} strokeWidth={iconStroke} aria-hidden="true" />
+          )}
         </button>
         <input
           ref={fileInputRef}
@@ -608,18 +649,43 @@ export function Composer({
           }}
         />
         <textarea
+          ref={textareaRef}
           className="composer__textarea"
           value={composer}
           onChange={(event) => setComposer(event.target.value)}
+          onPaste={(event) => {
+            const pastedText = event.clipboardData.getData("text/plain");
+            if (!pastedText) return;
+
+            event.preventDefault();
+            const textarea = event.currentTarget;
+            const insertion = insertPastedText(
+              composer,
+              pastedText,
+              textarea.selectionStart,
+              textarea.selectionEnd,
+            );
+            setComposer(insertion.value);
+            window.requestAnimationFrame(() => {
+              textarea.setSelectionRange(insertion.cursor, insertion.cursor);
+            });
+          }}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (
+              shouldSubmitComposerKey({
+                key: event.key,
+                shiftKey: event.shiftKey,
+                isComposing: event.nativeEvent.isComposing,
+              })
+            ) {
               event.preventDefault();
               event.currentTarget.form?.requestSubmit();
             }
           }}
           placeholder="Ask Aristotle anything"
+          aria-label="Message Aristotle"
+          maxLength={MAX_PROMPT_LENGTH}
           rows={1}
-          disabled={isRunning}
         />
         {isRunning ? (
           <button
@@ -627,6 +693,7 @@ export function Composer({
             type="button"
             onClick={onStop}
             title="Stop"
+            aria-label="Stop Aristotle"
           >
             <Pause size={18} strokeWidth={iconStroke} />
           </button>
@@ -634,13 +701,26 @@ export function Composer({
           <button
             className="send-button"
             type="submit"
-            disabled={!composer.trim()}
+            disabled={!composer.trim() || isUploadingFile}
             title="Send"
+            aria-label="Send message"
           >
             <Send size={18} strokeWidth={iconStroke} />
           </button>
         )}
       </div>
+      {showCharacterCount && (
+        <div
+          className={cx(
+            "composer-character-count",
+            charactersRemaining === 0 && "composer-character-count--limit",
+          )}
+          aria-live="polite"
+        >
+          {charactersRemaining.toLocaleString()} characters remaining
+          {charactersRemaining === 0 ? " — maximum reached" : ""}
+        </div>
+      )}
     </form>
   );
 }

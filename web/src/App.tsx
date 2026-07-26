@@ -49,6 +49,7 @@ import {
   routeFromPath,
   urlForArtifact,
 } from "./urlSync";
+import { MAX_PROMPT_LENGTH } from "./composerUtils";
 import type {
   ChatHistoryMessage,
   ChatMessage,
@@ -103,6 +104,8 @@ function App() {
   const artifactTriggerRef = useRef<HTMLElement | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<FileRecord[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const uploadRequestRef = useRef(0);
   const socketRef = useRef<WebSocket | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
@@ -417,11 +420,13 @@ function App() {
   }
 
   function resetTransientConversationUi() {
+    uploadRequestRef.current += 1;
     autoScrollRef.current = true;
     setShowJumpToLatest(false);
     setComposer("");
     setAttachedFiles([]);
     setFileError(null);
+    setIsUploadingFile(false);
     setRunState("idle");
     setSidebarOpen(false);
     setPanelOpen(false);
@@ -541,7 +546,9 @@ function App() {
     const prompt = composer.trim();
     if (
       !prompt ||
+      prompt.length > MAX_PROMPT_LENGTH ||
       !activeConversation ||
+      isUploadingFile ||
       runState === "streaming" ||
       runState === "connecting"
     ) {
@@ -1205,12 +1212,20 @@ function App() {
 
   async function handleUploadFile(file: File) {
     if (!activeId) return;
+    const requestId = ++uploadRequestRef.current;
     try {
       setFileError(null);
+      setIsUploadingFile(true);
       const response = await uploadFile(file, activeId);
+      if (requestId !== uploadRequestRef.current) return;
       setAttachedFiles((current) => mergeFiles(current, [response.file]));
     } catch (error) {
+      if (requestId !== uploadRequestRef.current) return;
       setFileError(error instanceof Error ? error.message : "File upload failed.");
+    } finally {
+      if (requestId === uploadRequestRef.current) {
+        setIsUploadingFile(false);
+      }
     }
   }
 
@@ -1329,6 +1344,7 @@ function App() {
               onStop={() => stopStream("stopped")}
               attachedFiles={attachedFiles}
               fileError={fileError}
+              isUploadingFile={isUploadingFile}
               onUploadFile={(file) => void handleUploadFile(file)}
               onRemoveFile={(fileId) => void handleRemoveFile(fileId)}
             />

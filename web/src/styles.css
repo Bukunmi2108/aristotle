@@ -1929,6 +1929,14 @@ input:focus-visible {
     transform 180ms var(--ease);
 }
 
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  box-shadow:
+    0 18px 46px rgb(43 39 32 / 0.12),
+    0 0 0 3px rgb(18 104 84 / 0.12),
+    inset 0 1px 0 rgb(255 255 255 / 0.88);
+}
+
 .composer__input-row {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 42px;
@@ -2024,10 +2032,26 @@ input:focus-visible {
   padding: 9px 16px 0;
 }
 
+.composer-character-count {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0 18px 11px;
+  text-align: right;
+}
+
+.composer-character-count--limit {
+  color: var(--danger);
+  font-weight: 680;
+}
+
 .composer__textarea {
   width: 100%;
   min-height: 34px;
-  max-height: 180px;
+  max-height: min(360px, 40dvh);
+  overflow-y: auto;
   resize: none;
   border: 0;
   background: transparent;
@@ -2042,6 +2066,16 @@ input:focus-visible {
 .composer__textarea:focus {
   box-shadow: none;
   outline: none;
+}
+
+.composer-upload-spinner {
+  animation: composer-spin 700ms linear infinite;
+}
+
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .composer__textarea::placeholder {
@@ -2166,12 +2200,18 @@ input:focus-visible {
   }
 
   .composer__textarea {
-    font-size: 15px;
+    font-size: 16px;
   }
 
   .send-button {
     width: 40px;
     height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-upload-spinner {
+    animation: none;
   }
 }
 
