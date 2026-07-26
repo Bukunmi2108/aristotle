@@ -1,10 +1,13 @@
 import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   FileCode2,
   FileImage,
   FileText,
-  Files,
   RefreshCw,
   X,
 } from "lucide-react";
@@ -36,14 +39,16 @@ export function ArtifactPanel({
 }: ArtifactPanelProps) {
   const isMobile = useMediaQuery("(max-width: 820px)");
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const files = useMemo(() => latestByPath(artifacts), [artifacts]);
   const active =
     artifacts.find((artifact) => artifact.id === activeId) ??
     files[files.length - 1];
+  // Oldest first, so the version stepper reads left-to-right as time moving forward.
   const versions = active
     ? artifacts
         .filter((artifact) => artifact.path === active.path)
-        .sort((left, right) => right.version - left.version)
+        .sort((left, right) => left.version - right.version)
     : [];
 
   useEffect(() => {
@@ -58,6 +63,12 @@ export function ArtifactPanel({
 
   if (!active) return null;
 
+  const label = active.title || fileName(active.path);
+  const meta = [
+    fileTypeLabel(active.mimeType),
+    active.sizeBytes !== undefined ? formatFileSize(active.sizeBytes) : null,
+  ].filter(Boolean);
+
   return (
     <dialog
       ref={dialogRef}
@@ -66,26 +77,31 @@ export function ArtifactPanel({
       aria-labelledby="artifact-workspace-title"
       onCancel={(event) => {
         event.preventDefault();
+        // Escape peels one layer at a time: the file menu before the panel.
+        if (menuOpen) {
+          setMenuOpen(false);
+          return;
+        }
         onClose();
       }}
     >
       <header className="artifact-workspace__header">
-        <div className="artifact-workspace__identity">
-          <span className="artifact-workspace__file-icon" aria-hidden="true">
-            <ArtifactIcon mimeType={active.mimeType} />
-          </span>
-          <div className="artifact-workspace__title-block">
-            <h2 id="artifact-workspace-title">
-              {active.title || fileName(active.path)}
-            </h2>
-            <p>
-              {fileTypeLabel(active.mimeType)}
-              {active.sizeBytes !== undefined
-                ? ` · ${formatFileSize(active.sizeBytes)}`
-                : ""}
-            </p>
+        {files.length > 1 ? (
+          <FileSwitcher
+            files={files}
+            active={active}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            onSelect={onSelect}
+          />
+        ) : (
+          <div className="artifact-workspace__identity">
+            <span aria-hidden="true">
+              <ArtifactIcon mimeType={active.mimeType} />
+            </span>
+            <h2 id="artifact-workspace-title">{label}</h2>
           </div>
-        </div>
+        )}
         <div className="artifact-workspace__actions">
           <a
             className="artifact-action"
@@ -95,7 +111,7 @@ export function ArtifactPanel({
             aria-label={`Open ${fileName(active.path)} in a new tab`}
             title="Open in new tab"
           >
-            <ExternalLink size={17} strokeWidth={1.8} />
+            <ExternalLink size={16} strokeWidth={1.8} />
           </a>
           <a
             className="artifact-action"
@@ -104,7 +120,7 @@ export function ArtifactPanel({
             aria-label={`Download ${fileName(active.path)}`}
             title="Download file"
           >
-            <Download size={17} strokeWidth={1.8} />
+            <Download size={16} strokeWidth={1.8} />
           </a>
           <button
             className="artifact-action"
@@ -113,79 +129,148 @@ export function ArtifactPanel({
             aria-label="Close artifact workspace"
             title="Close artifact workspace"
           >
-            <X size={18} strokeWidth={1.8} />
+            <X size={17} strokeWidth={1.8} />
           </button>
         </div>
       </header>
 
-      <div
-        className={
-          files.length > 1
-            ? "artifact-workspace__content"
-            : "artifact-workspace__content artifact-workspace__content--single"
-        }
-      >
-        {files.length > 1 && (
-          <nav className="artifact-navigator" aria-label="Artifacts in this conversation">
-            <div className="artifact-navigator__label">
-              <Files size={14} strokeWidth={1.8} aria-hidden="true" />
-              <span>{files.length} files</span>
-            </div>
-            <div className="artifact-navigator__items">
-              {files.map((file) => {
-                const selected = file.path === active.path;
-                return (
-                  <button
-                    key={file.path}
-                    type="button"
-                    className={
-                      selected
-                        ? "artifact-navigator__item artifact-navigator__item--active"
-                        : "artifact-navigator__item"
-                    }
-                    aria-current={selected ? "true" : undefined}
-                    onClick={() => onSelect(file.id)}
-                  >
-                    <span aria-hidden="true">
-                      <ArtifactIcon mimeType={file.mimeType} />
-                    </span>
-                    <span>
-                      <strong>{file.title || fileName(file.path)}</strong>
-                      <small>{fileTypeLabel(file.mimeType)}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-        )}
-
-        <section className="artifact-stage" aria-label="Artifact preview">
-          {versions.length > 1 && (
-            <div className="artifact-version">
-              <label htmlFor="artifact-version-select">Version</label>
-              <select
-                id="artifact-version-select"
-                value={active.id}
-                onChange={(event) => onSelect(event.target.value)}
-              >
-                {versions.map((version) => (
-                  <option key={version.id} value={version.id}>
-                    v{version.version}
-                    {version.createdAt
-                      ? ` · ${formatTimestamp(version.createdAt)}`
-                      : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="artifact-stage__viewport">
-            <ArtifactPreview key={active.id} artifact={active} />
-          </div>
-        </section>
+      <div className="artifact-stage" aria-label="Artifact preview">
+        <ArtifactPreview key={active.id} artifact={active} />
       </div>
+
+      <footer className="artifact-workspace__footer">
+        <p className="artifact-workspace__meta">{meta.join(" · ")}</p>
+        {versions.length > 1 && (
+          <VersionStepper
+            versions={versions}
+            active={active}
+            onSelect={onSelect}
+          />
+        )}
+      </footer>
     </dialog>
+  );
+}
+
+function FileSwitcher({
+  files,
+  active,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  files: PresentedArtifact[];
+  active: PresentedArtifact;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (artifactId: string) => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    // Non-modal on desktop, so the dialog's own cancel never fires — close here.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <div className="artifact-switcher" ref={rootRef}>
+      <button
+        type="button"
+        className="artifact-switcher__trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span aria-hidden="true">
+          <ArtifactIcon mimeType={active.mimeType} />
+        </span>
+        <h2 id="artifact-workspace-title">
+          {active.title || fileName(active.path)}
+        </h2>
+        <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="artifact-switcher__menu" role="menu">
+          {files.map((file) => {
+            const selected = file.path === active.path;
+            return (
+              <button
+                key={file.path}
+                type="button"
+                role="menuitem"
+                className="artifact-switcher__item"
+                aria-current={selected ? "true" : undefined}
+                onClick={() => {
+                  onSelect(file.id);
+                  onOpenChange(false);
+                }}
+              >
+                <span aria-hidden="true">
+                  <ArtifactIcon mimeType={file.mimeType} />
+                </span>
+                <span className="artifact-switcher__item-name">
+                  {file.title || fileName(file.path)}
+                </span>
+                {selected && (
+                  <Check size={14} strokeWidth={2.2} aria-hidden="true" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VersionStepper({
+  versions,
+  active,
+  onSelect,
+}: {
+  versions: PresentedArtifact[];
+  active: PresentedArtifact;
+  onSelect: (artifactId: string) => void;
+}) {
+  const index = versions.findIndex((version) => version.id === active.id);
+  const older = versions[index - 1];
+  const newer = versions[index + 1];
+  return (
+    <div className="artifact-versions">
+      <button
+        type="button"
+        className="artifact-step"
+        disabled={!older}
+        onClick={() => older && onSelect(older.id)}
+        aria-label="Previous version"
+      >
+        <ChevronLeft size={15} strokeWidth={2} aria-hidden="true" />
+      </button>
+      <span aria-live="polite">
+        Version {index + 1} of {versions.length}
+      </span>
+      <button
+        type="button"
+        className="artifact-step"
+        disabled={!newer}
+        onClick={() => newer && onSelect(newer.id)}
+        aria-label="Next version"
+      >
+        <ChevronRight size={15} strokeWidth={2} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -524,14 +609,4 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(date);
 }
