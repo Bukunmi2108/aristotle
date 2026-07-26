@@ -679,6 +679,7 @@ function App() {
         type: "user.message",
         message: prompt,
         conversation_id: conversationId,
+        active_artifact_id: activeArtifactId || undefined,
         history,
         options: {
           max_search_results: 5,

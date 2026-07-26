@@ -70,6 +70,7 @@ export type ClientUserMessage = {
   type: "user.message";
   message: string;
   conversation_id?: string;
+  active_artifact_id?: string;
   history?: ChatHistoryMessage[];
   options?: {
     max_search_results?: number;

@@ -2,9 +2,11 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.config import SandboxSettings
 from app.workspace import (
+    DocumentExportError,
     InvalidConversationError,
     NotFoundError,
     PathEscapeError,
@@ -95,6 +97,84 @@ class WorkspaceFsTest(unittest.TestCase):
         self.manager.write_file("c", "a.txt", b"x")
         self.manager.destroy("c")
         self.assertFalse((Path(self.tmp) / "c").exists())
+
+
+class DocumentExportTest(unittest.IsolatedAsyncioTestCase):
+    async def test_exports_markdown_to_valid_pdf_with_fixed_toolchain(self):
+        root = tempfile.mkdtemp(prefix="ws-export-")
+        manager = WorkspaceManager(_settings(root))
+        manager.write_file("c", "reports/history.md", b"# Roman History")
+
+        class Process:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+        async def create_process(*args, **kwargs):
+            if args[0] == "pandoc":
+                output_arg = next(arg for arg in args if arg.startswith("--output="))
+                Path(output_arg.removeprefix("--output=")).write_text(
+                    "<h1>History</h1>"
+                )
+            else:
+                Path(args[3]).write_bytes(b"%PDF-" + b"x" * 200)
+            return Process()
+
+        with patch(
+            "app.workspace.asyncio.create_subprocess_exec",
+            side_effect=create_process,
+        ):
+            result = await manager.export_document(
+                "c",
+                "reports/history.md",
+                "reports/history.pdf",
+                "Roman History",
+            )
+
+        self.assertEqual(result.mime_type, "application/pdf")
+        self.assertGreater(result.size, 100)
+        self.assertTrue(
+            manager.read_file("c", "reports/history.pdf").startswith(b"%PDF-")
+        )
+
+    async def test_rejects_unsupported_source_without_starting_converter(self):
+        root = tempfile.mkdtemp(prefix="ws-export-")
+        manager = WorkspaceManager(_settings(root))
+        manager.write_file("c", "notes.txt", b"notes")
+
+        with self.assertRaisesRegex(DocumentExportError, "Markdown only"):
+            await manager.export_document("c", "notes.txt", "notes.pdf")
+
+    async def test_failed_export_preserves_existing_pdf(self):
+        root = tempfile.mkdtemp(prefix="ws-export-")
+        manager = WorkspaceManager(_settings(root))
+        manager.write_file("c", "report.md", b"# Updated")
+        manager.write_file("c", "report.pdf", b"%PDF-existing")
+
+        class Process:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+        async def create_process(*args, **kwargs):
+            if args[0] == "pandoc":
+                output_arg = next(arg for arg in args if arg.startswith("--output="))
+                Path(output_arg.removeprefix("--output=")).write_text(
+                    "<h1>Updated</h1>"
+                )
+            else:
+                Path(args[3]).write_bytes(b"not a pdf")
+            return Process()
+
+        with patch(
+            "app.workspace.asyncio.create_subprocess_exec",
+            side_effect=create_process,
+        ), self.assertRaisesRegex(DocumentExportError, "invalid"):
+            await manager.export_document("c", "report.md", "report.pdf")
+
+        self.assertEqual(manager.read_file("c", "report.pdf"), b"%PDF-existing")
 
 
 class WorkspaceExecTest(unittest.TestCase):

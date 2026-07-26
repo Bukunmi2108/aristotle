@@ -16,7 +16,9 @@ WORKDIR /app
 # C toolchain for native extensions. Kept minimal on top of python:3.12-slim.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        nodejs npm build-essential git ca-certificates \
+        nodejs npm build-essential git ca-certificates pandoc \
+        fonts-dejavu-core fonts-noto-core \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock /app/
@@ -27,6 +29,7 @@ RUN uv sync --frozen --no-dev --no-install-project \
     && uv pip install --no-cache pandas numpy matplotlib
 
 COPY app /app/app
+COPY assets /app/assets
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

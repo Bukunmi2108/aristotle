@@ -3,12 +3,14 @@ import os
 import re
 import resource
 import signal
+import sys
 from pathlib import Path
 from shutil import rmtree
 from time import monotonic
+from uuid import uuid4
 
 from app.config import SandboxSettings
-from app.models import ExecResult, FileNode
+from app.models import ExecResult, ExportDocumentResponse, FileNode
 
 # Leading alphanumeric required so an id can never be a traversal token
 # (".", "..") that _conversation_dir/destroy would resolve to the root.
@@ -30,6 +32,10 @@ class PathEscapeError(WorkspaceError):
 
 
 class NotFoundError(WorkspaceError):
+    pass
+
+
+class DocumentExportError(WorkspaceError):
     pass
 
 
@@ -131,6 +137,97 @@ class WorkspaceManager:
     def destroy(self, conversation_id: str) -> None:
         directory = self._conversation_dir(conversation_id)
         rmtree(directory, ignore_errors=True)
+
+    async def export_document(
+        self,
+        conversation_id: str,
+        source_path: str,
+        output_path: str,
+        title: str | None = None,
+    ) -> ExportDocumentResponse:
+        source = self.resolve(conversation_id, source_path)
+        output = self.resolve(conversation_id, output_path)
+        if not source.is_file():
+            raise NotFoundError(f"File not found: {source_path!r}")
+        if source.suffix.lower() not in {".md", ".markdown"}:
+            raise DocumentExportError("PDF export currently supports Markdown only.")
+        if output.suffix.lower() != ".pdf":
+            raise DocumentExportError("PDF output path must end in '.pdf'.")
+        if source == output:
+            raise DocumentExportError("PDF output path must differ from the source.")
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+        internal = self.ensure(conversation_id) / ".aristotle" / "exports"
+        internal.mkdir(parents=True, exist_ok=True)
+        export_id = uuid4().hex
+        html_path = internal / f"{export_id}.html"
+        pdf_path = internal / f"{export_id}.pdf"
+        try:
+            await self._run_fixed_export(
+                [
+                    "pandoc",
+                    str(source),
+                    "--from=gfm",
+                    "--to=html5",
+                    "--standalone",
+                    f"--metadata=title:{title or source.stem}",
+                    "--css=/app/assets/report.css",
+                    f"--output={html_path}",
+                ],
+                "Markdown conversion",
+            )
+            await self._run_fixed_export(
+                [
+                    sys.executable,
+                    "/app/assets/render_pdf.py",
+                    str(html_path),
+                    str(pdf_path),
+                    str(source.parent),
+                    str(self.ensure(conversation_id)),
+                ],
+                "PDF rendering",
+            )
+            data = pdf_path.read_bytes() if pdf_path.is_file() else b""
+            if len(data) < 100 or not data.startswith(b"%PDF-"):
+                raise DocumentExportError("PDF renderer produced an invalid document.")
+            pdf_path.replace(output)
+            return ExportDocumentResponse(
+                source_path=source_path,
+                output_path=output_path,
+                size=len(data),
+            )
+        finally:
+            html_path.unlink(missing_ok=True)
+            pdf_path.unlink(missing_ok=True)
+
+    async def _run_fixed_export(self, args: list[str], label: str) -> None:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                env={
+                    "PATH": os.environ.get("PATH", DEFAULT_PATH),
+                    "LANG": os.environ.get("LANG", "C.UTF-8"),
+                },
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                preexec_fn=self._build_preexec(),
+            )
+        except FileNotFoundError as exc:
+            raise DocumentExportError(f"{label} is unavailable.") from exc
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.settings.command_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            self._kill_process_group(process)
+            await process.wait()
+            raise DocumentExportError(f"{label} timed out.") from exc
+        if process.returncode != 0:
+            detail = (stderr or stdout).decode(errors="replace").strip()
+            raise DocumentExportError(
+                f"{label} failed: {detail[:1000] or 'unknown error'}"
+            )
 
     async def exec(
         self,

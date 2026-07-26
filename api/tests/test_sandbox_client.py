@@ -71,14 +71,40 @@ class SandboxClientTest(unittest.TestCase):
                 json={
                     "path": ".",
                     "entries": [
-                        {"name": "a.txt", "path": "a.txt", "type": "file", "size": 1,
-                         "mtime": 0.0}
+                        {
+                            "name": "a.txt",
+                            "path": "a.txt",
+                            "type": "file",
+                            "size": 1,
+                            "mtime": 0.0,
+                        }
                     ],
                 },
             )
         )
         entries = asyncio.run(client.list_dir("c"))
         self.assertEqual(entries[0]["name"], "a.txt")
+
+    def test_export_document_uses_fixed_export_endpoint(self):
+        client = self._client(
+            lambda r: httpx.Response(
+                200,
+                json={
+                    "source_path": "report.md",
+                    "output_path": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "size": 1024,
+                },
+            )
+        )
+
+        result = asyncio.run(
+            client.export_document("c", "report.md", "report.pdf", "Report")
+        )
+
+        self.assertEqual(result["output_path"], "report.pdf")
+        self.assertEqual(self.requests[-1].url.path, "/workspaces/c/export")
+        self.assertIn(b'"source_path":"report.md"', self.requests[-1].content)
 
     def test_error_response_raises_sandbox_error_with_detail(self):
         client = self._client(

@@ -61,9 +61,11 @@ class AristotleAgentRuntime:
             options = user_message.options
             if options.file_ids and self.document_store is None:
                 raise RuntimeError("Document persistence is not configured.")
-            prompt = await self._message_with_file_context(
+            prompt = await self._message_with_context(
                 user_message.message,
                 options.file_ids,
+                user_message.conversation_id,
+                user_message.active_artifact_id,
             )
             workspace = (
                 Workspace(self.sandbox_client, user_message.conversation_id)
@@ -167,43 +169,87 @@ class AristotleAgentRuntime:
         finally:
             reset_model_trace(trace_token)
 
-    async def _message_with_file_context(
+    async def _message_with_context(
         self,
         message: str,
         file_ids: list[str],
+        conversation_id: str | None = None,
+        active_artifact_id: str | None = None,
     ) -> str:
-        if not file_ids:
-            return message
         if self.document_store is None:
             return message
 
+        sections: list[str] = []
         files: list[dict[str, Any]] = []
         for file_id in file_ids:
             record = await self.document_store.get_file(file_id)
             if record is not None:
                 files.append(record)
 
-        if not files:
-            return message
+        if files:
+            file_lines = "\n".join(
+                f"- {file['filename']} (file_id: {file['id']})" for file in files
+            )
+            sections.append(
+                "Attached files for this user message:\n"
+                f"{file_lines}\n\n"
+                "Inspect attached files with DocumentTools before resolving vague "
+                "references. Keep document evidence distinct from externally "
+                "verified evidence."
+            )
 
-        file_lines = "\n".join(
-            f"- {file['filename']} (file_id: {file['id']})" for file in files
-        )
-        return (
-            "Attached files for this user message:\n"
-            f"{file_lines}\n\n"
-            "This user message includes uploaded files. Inspect the attached files "
-            "with DocumentTools before asking for clarification about vague "
-            "references such as 'this', 'it', 'the file', or 'is this true'. "
-            "Use list_files first if needed, then search_document or read_file for "
-            "evidence. Do not answer from the filename alone. For truth or accuracy "
-            "questions, first identify what the document itself says and whether its "
-            "internal claims are supported by the document. If the claim depends on "
-            "current prices, dates, public facts, or real-world availability, verify "
-            "that externally with web search after inspecting the file. Keep document "
-            "evidence distinct from externally verified evidence.\n\n"
-            f"User message:\n{message}"
-        )
+        if conversation_id:
+            presentations = await self.document_store.list_presentations(
+                conversation_id
+            )
+            latest_by_path: dict[str, dict[str, Any]] = {}
+            for presentation in presentations:
+                path = presentation["path"]
+                current = latest_by_path.get(path)
+                if current is None or presentation["version"] > current["version"]:
+                    latest_by_path[path] = presentation
+            recent = sorted(
+                latest_by_path.values(),
+                key=lambda item: str(item.get("created_at") or ""),
+            )[-8:]
+            active = next(
+                (item for item in presentations if item["id"] == active_artifact_id),
+                None,
+            )
+            if active is not None and all(
+                item["id"] != active["id"] for item in recent
+            ):
+                recent = [*recent[-7:], active]
+            if recent:
+                artifact_lines = "\n".join(
+                    "- "
+                    + ("[active] " if item["id"] == active_artifact_id else "")
+                    + f"{item['path']} (artifact_id: {item['id']}, "
+                    + f"mime: {item['mime_type']}, version: {item['version']}, "
+                    + f"title: {item.get('title') or 'untitled'}, "
+                    + f"message_id: {item.get('message_id') or 'unknown'})"
+                    for item in recent
+                )
+                sections.append(
+                    "Trusted artifacts already presented in this conversation:\n"
+                    f"{artifact_lines}\n\n"
+                    "For follow-ups such as 'this', 'it', 'as PDF', or 'also as "
+                    "Markdown', use the active artifact first, otherwise the newest "
+                    "compatible artifact. Read the workspace path before modifying or "
+                    "exporting it. A format-only request must reuse the existing "
+                    "content and must not trigger new web research. Use export_document "
+                    "when the user asks for Markdown and/or PDF; it presents every "
+                    "successful requested format."
+                )
+
+        if not sections:
+            return message
+        return "\n\n".join(sections) + f"\n\nUser message:\n{message}"
+
+    async def _message_with_file_context(
+        self, message: str, file_ids: list[str]
+    ) -> str:
+        return await self._message_with_context(message, file_ids)
 
     async def _handle_event(
         self,

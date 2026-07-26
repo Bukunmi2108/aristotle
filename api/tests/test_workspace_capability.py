@@ -92,6 +92,91 @@ class WorkspaceToolsetTest(unittest.TestCase):
                 )
                 owner[name] = cap_name
 
+    def test_export_document_converts_then_presents_markdown_and_pdf(self):
+        class ExportWorkspace:
+            conversation_id = "conv_1"
+
+            def __init__(self):
+                self.files = {"reports/history.md": b"# History"}
+                self.exports = []
+
+            async def list_dir(self, path):
+                prefix = "" if path == "." else path.rstrip("/") + "/"
+                return [
+                    {"name": file_path.removeprefix(prefix)}
+                    for file_path in self.files
+                    if file_path.startswith(prefix)
+                    and "/" not in file_path.removeprefix(prefix)
+                ]
+
+            async def export_document(self, source_path, output_path, title=None):
+                self.exports.append((source_path, output_path, title))
+                self.files[output_path] = b"%PDF-" + b"x" * 200
+                return {
+                    "output_path": output_path,
+                    "size": len(self.files[output_path]),
+                }
+
+            async def read_file(self, path):
+                return self.files[path]
+
+            async def write_file(self, path, data):
+                self.files[path] = data
+                return {"size": len(data)}
+
+        class Events:
+            message_id = "msg_2"
+
+            def __init__(self):
+                self.sent = []
+
+            async def send(self, event_type, **payload):
+                self.sent.append((event_type, payload))
+
+        class Store:
+            def __init__(self):
+                self.records = []
+
+            async def create_presentation(self, **record):
+                self.records.append(record)
+                return {"id": record["presentation_id"], "version": 1}
+
+        workspace = ExportWorkspace()
+        events = Events()
+        store = Store()
+        ctx = SimpleNamespace(
+            deps=SimpleNamespace(
+                workspace_tools_enabled=True,
+                workspace=workspace,
+                document_store=store,
+                events=events,
+            )
+        )
+        tool = WorkspaceTools().get_toolset().tools["export_document"]
+
+        result = asyncio.run(
+            tool.function(
+                ctx,
+                "reports/history.md",
+                ["markdown", "pdf"],
+                "Roman History",
+            )
+        )
+
+        self.assertEqual(
+            workspace.exports,
+            [("reports/history.md", "reports/history.pdf", "Roman History")],
+        )
+        self.assertEqual(
+            [artifact.path for artifact in result.artifacts],
+            ["reports/history.md", "reports/history.pdf"],
+        )
+        self.assertEqual(len(store.records), 2)
+        self.assertEqual(
+            [event for event, _ in events.sent],
+            ["workspace.present", "workspace.present"],
+        )
+
 
 class WorkspaceHelpersTest(unittest.TestCase):
     def test_command_result_maps_all_fields(self):

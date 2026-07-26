@@ -143,6 +143,25 @@ class SandboxClient:
         )
         _json_or_raise(response)
 
+    async def export_document(
+        self,
+        conversation_id: str,
+        source_path: str,
+        output_path: str,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self.http.post(
+            self._url(conversation_id, "/export"),
+            json={
+                "source_path": source_path,
+                "output_path": output_path,
+                "title": title,
+            },
+            headers=self._headers(),
+            timeout=self.command_timeout + 15,
+        )
+        return _json_or_raise(response)
+
     async def move(self, conversation_id: str, src: str, dst: str) -> None:
         response = await self.http.post(
             self._url(conversation_id, "/move"),
@@ -205,6 +224,13 @@ class Workspace:
 
     async def make_dir(self, path: str) -> None:
         await self._client.make_dir(self.conversation_id, path)
+
+    async def export_document(
+        self, source_path: str, output_path: str, title: str | None = None
+    ):
+        return await self._client.export_document(
+            self.conversation_id, source_path, output_path, title
+        )
 
     async def move(self, src: str, dst: str) -> None:
         await self._client.move(self.conversation_id, src, dst)

@@ -7,6 +7,7 @@ dependencies = [
     "fastapi[standard]>=0.138.1",
     "pydantic>=2.13.4",
     "uvicorn>=0.49.0",
+    "weasyprint>=68.0",
 ]
 
 [tool.uv]

@@ -8,6 +8,8 @@ from app.config import SERVICE_NAME, SETTINGS
 from app.models import (
     ExecRequest,
     ExecResult,
+    ExportDocumentRequest,
+    ExportDocumentResponse,
     ListResponse,
     MoveRequest,
     OkResponse,
@@ -72,6 +74,7 @@ async def root() -> dict:
             "health": "/healthz",
             "readiness": "/readyz",
             "exec": "/workspaces/{conversation_id}/exec",
+            "export": "/workspaces/{conversation_id}/export",
             "file": "/workspaces/{conversation_id}/file",
             "list": "/workspaces/{conversation_id}/list",
         },
@@ -172,6 +175,25 @@ async def write_file(
     except WorkspaceError as exc:
         raise _handle(exc) from exc
     return WriteResponse(path=path, size=size)
+
+
+@app.post(
+    "/workspaces/{conversation_id}/export",
+    response_model=ExportDocumentResponse,
+    dependencies=[Depends(require_token)],
+)
+async def export_document(
+    conversation_id: str, body: ExportDocumentRequest, request: Request
+) -> ExportDocumentResponse:
+    try:
+        return await _manager(request).export_document(
+            conversation_id,
+            body.source_path,
+            body.output_path,
+            body.title,
+        )
+    except WorkspaceError as exc:
+        raise _handle(exc) from exc
 
 
 @app.post(
