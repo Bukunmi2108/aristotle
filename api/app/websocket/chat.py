@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.agent.runtime import AristotleAgentRuntime
+from app.chat_runs import DocumentScopeError, create_chat_run
 from app.config import SETTINGS
 from app.db import PersistenceStore
 from app.errors import ServiceWakeTimeoutError
@@ -35,6 +36,29 @@ async def chat_websocket(websocket: WebSocket) -> None:
             update={"conversation_id": conversation_id}
         )
         store = getattr(websocket.app.state, "store", None)
+        dbos_client = getattr(websocket.app.state, "dbos_client", None)
+        if store is not None and dbos_client is not None:
+            created = await create_chat_run(store, dbos_client, user_message)
+            cursor: str | None = None
+            while True:
+                persisted_events = await store.list_events(created.run_id, cursor)
+                for event in persisted_events:
+                    cursor = event["event_id"]
+                    await websocket.send_json(event)
+                if any(
+                    event["type"] in {"session.completed", "error"}
+                    for event in persisted_events
+                ):
+                    return
+                record = await store.get_run(created.run_id)
+                if (
+                    not persisted_events
+                    and record is not None
+                    and record["status"] in {"complete", "error", "cancelled"}
+                ):
+                    return
+                await asyncio.sleep(0.5)
+
         run_id = f"run_{uuid4().hex}"
         user_message_id = f"msg_{uuid4().hex}"
         assistant_message_id = f"msg_{uuid4().hex}"
@@ -232,10 +256,6 @@ def _conversation_title(message: str) -> str:
     if len(title) <= 56:
         return title or "New chat"
     return f"{title[:53].rstrip()}..."
-
-
-class DocumentScopeError(ValueError):
-    pass
 
 
 async def _validate_attached_files(
