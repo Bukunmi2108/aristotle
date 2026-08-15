@@ -688,15 +688,26 @@ export function Composer({
           rows={1}
         />
         {isRunning ? (
-          <button
-            className="send-button send-button--stop"
-            type="button"
-            onClick={onStop}
-            title="Stop"
-            aria-label="Stop Aristotle"
-          >
-            <Pause size={18} strokeWidth={iconStroke} />
-          </button>
+          <>
+            <button
+              className="send-button"
+              type="submit"
+              disabled={!composer.trim()}
+              title="Add instruction to this run"
+              aria-label="Add instruction to this run"
+            >
+              <Send size={18} strokeWidth={iconStroke} />
+            </button>
+            <button
+              className="send-button send-button--stop"
+              type="button"
+              onClick={onStop}
+              title="Stop"
+              aria-label="Stop Aristotle"
+            >
+              <Pause size={18} strokeWidth={iconStroke} />
+            </button>
+          </>
         ) : (
           <button
             className="send-button"

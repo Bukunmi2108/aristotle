@@ -1,4 +1,4 @@
-export type ServiceName = "model" | "search" | "sandbox";
+export type ServiceName = "model" | "search" | "sandbox" | "worker";
 
 export type ServiceStatus = {
   ok: boolean;
@@ -13,6 +13,7 @@ export type ServicesResponse = {
   model: ServiceStatus;
   search: ServiceStatus;
   sandbox?: ServiceStatus | null;
+  worker?: ServiceStatus | null;
   poll_interval_seconds?: number | null;
   wake_timeout_seconds?: number | null;
 };
@@ -34,6 +35,8 @@ export type StoredMessage = {
   parent_message_id?: string | null;
   created_at: string;
   completed_at?: string | null;
+  run_id?: string | null;
+  run_status?: string | null;
   attachments?: MessageAttachment[];
   presentations?: Array<{
     id: string;
@@ -153,10 +156,12 @@ export type ServerEventType =
   | "error";
 
 export type ServerEvent = {
+  event_id?: string;
   type: ServerEventType;
   sequence: number;
   timestamp: string;
   conversation_id?: string;
+  run_id?: string;
   service?: string;
   provider?: string;
   model?: string;
@@ -242,6 +247,7 @@ export type ChatMessage = {
   parts?: MessagePart[];
   sources?: SourcePreview[];
   metrics?: MessageMetrics;
+  runId?: string;
 };
 
 export type MessageMetrics = {
