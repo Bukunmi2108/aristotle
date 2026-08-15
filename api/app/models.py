@@ -1,8 +1,8 @@
 from typing import Literal
+
 from pydantic import BaseModel, Field
 
-
-ServiceName = Literal["model", "search", "sandbox"]
+ServiceName = Literal["model", "search", "sandbox", "worker"]
 Freshness = Literal["day", "month", "year"]
 
 
@@ -30,6 +30,7 @@ class ServicesResponse(BaseModel):
     model: ServiceStatus
     search: ServiceStatus
     sandbox: ServiceStatus | None = None
+    worker: ServiceStatus | None = None
     poll_interval_seconds: float | None = None
     wake_timeout_seconds: float | None = None
 
@@ -39,6 +40,7 @@ class ServicesResponse(BaseModel):
             self.model.ok
             and self.search.ok
             and (self.sandbox is None or self.sandbox.ok)
+            and (self.worker is None or self.worker.ok)
         )
 
 
@@ -72,6 +74,18 @@ class ClientUserMessage(BaseModel):
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=24)
     active_artifact_id: str | None = Field(default=None, pattern=r"^pres_[A-Za-z0-9]+$")
     options: ChatOptions = Field(default_factory=ChatOptions)
+
+
+class RunCreatedResponse(BaseModel):
+    run_id: str
+    conversation_id: str
+    user_message_id: str
+    assistant_message_id: str
+    status: str = "queued"
+
+
+class RunSteerRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=12000)
 
 
 class SearchToolRequest(BaseModel):
