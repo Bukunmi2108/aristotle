@@ -49,6 +49,37 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Headless durable executor. It owns DBOS queue consumption and agent/tool
+  # work; the HTTP service only creates runs and serves their persisted events.
+  worker:
+    build:
+      context: ${APP_SOURCE_ROOT:-./source}/api
+    image: aristotle-api-backend:${APP_IMAGE_TAG:-local}
+    container_name: workspace-aristotle-worker
+    command: ["uv", "run", "--frozen", "python", "-m", "app.worker"]
+    env_file:
+      - ${APP_ENV_FILE:-./.env}
+    environment:
+      # Direct container traffic would not reset Sablier's idle timer during
+      # long runs, so the worker uses the wake-aware public proxy.
+      ARISTOTLE_SEARCH_BASE_URL: ${ARISTOTLE_DURABLE_SEARCH_BASE_URL:-https://aristotle-search.duckdns.org}
+    networks:
+      - gateway
+      - data
+      - internal
+    volumes:
+      - aristotle_storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from pathlib import Path; assert Path('/tmp/aristotle-worker-ready').exists()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 2g
+    cpus: "2.0"
+    security_opt:
+      - no-new-privileges:true
+
   # The only component that runs untrusted, agent-written code. It joins ONLY
   # the private internal network (no public edge, no Postgres, no other project),
   # so a breakout is boxed into a resource-capped container with nothing valuable
@@ -69,9 +100,6 @@ services:
       - aristotle_workspace_data:/workspace
     tmpfs:
       - /tmp
-    labels:
-      sablier.enable: "true"
-      sablier.group: aristotle-search
     healthcheck:
       test:
         - CMD

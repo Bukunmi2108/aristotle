@@ -2,13 +2,13 @@
 
 Agent orchestration layer for Aristotle.
 
-The frontend should talk only to this API. The API wakes the model provider and
-the co-located search service, runs the Pydantic AI agent, exposes tool activity,
-and streams reasoning/output events back to the client.
+The frontend should talk only to this API. FastAPI creates and controls durable
+runs; a headless DBOS worker runs the Pydantic AI agent and journals events for
+resumable delivery.
 
-Deployed to the Workspace VPS as `workspace-aristotle-api` behind the shared Caddy
-gateway with Sablier scale-to-zero (see [`deploy/`](deploy/)); it uses the shared
-PostgreSQL service and reaches the search service over the internal network.
+The HTTP service is deployed as `workspace-aristotle-api` behind Caddy/Sablier.
+`workspace-aristotle-worker` and `workspace-aristotle-sandbox` stay on so work
+can continue without a browser connection. See [durable runs](docs/durable-runs.md).
 
 ## Services
 
@@ -18,6 +18,8 @@ aristotle-api
   /healthz          process health
   /readyz           model/search/workspace readiness
   /services         model/search/workspace status
+  /runs              create a durable chat turn
+  /runs/{id}/events/stream  resumable event delivery
   /ws/chat          chat WebSocket
 
 primary inference provider
@@ -44,8 +46,10 @@ prompt, model settings, retries, metadata, built-in capabilities, and custom
 tool capabilities live in `app/agent/specs/aristotle.yaml`.
 
 ```text
-client WebSocket
-  -> Aristotle API
+client HTTP
+  -> Aristotle API control plane
+    -> PostgreSQL + DBOS queue
+  -> headless Aristotle worker
     -> wake/check model
     -> Pydantic AI agent run_stream_events()
       -> optional LocalWebTools capability call
@@ -55,13 +59,13 @@ client WebSocket
       -> optional UtilityTools capability call
         -> get_datetime / calculate
       -> llama.cpp OpenAI-compatible /v1/chat/completions
-  -> streamed websocket events
+  -> persisted events replayed over SSE (WebSocket remains compatible)
 ```
 
 Web search tools are available automatically. The model decides when to call
 them during the response.
 
-The primary provider is ModelScope API Inference using `zai-org/GLM-5.2`. The
+The primary provider is ModelScope API Inference using the configured model. The
 fallback is the existing llama.cpp OpenAI-compatible Space. Both are wrapped
 with OpenAI-compatible Pydantic AI profiles that map streamed
 `reasoning_content` into thinking events. The runtime falls back on quota, rate
@@ -91,7 +95,7 @@ app/agent/factory.py             primary/fallback model provider wiring
 app/agent/runtime.py             event-stream translation
 ```
 
-## WebSocket Events
+## Run events
 
 Typical event sequence:
 

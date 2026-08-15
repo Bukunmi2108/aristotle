@@ -6,6 +6,7 @@ APP_DIR="/opt/workspace/apps/aristotle-api"
 SOURCE_DIR="$APP_DIR/source"
 COMPOSE_FILE="$SOURCE_DIR/api/deploy/compose.production.yaml"
 API_CONTAINER="workspace-aristotle-api"
+WORKER_CONTAINER="workspace-aristotle-worker"
 SANDBOX_CONTAINER="workspace-aristotle-sandbox"
 
 SHA="${1:?usage: release <git-sha>}"
@@ -21,7 +22,7 @@ services="$(
   APP_IMAGE_TAG="$SHA" \
     docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" config --services
 )"
-for required_service in backend sandbox; do
+for required_service in backend worker sandbox; do
   if ! grep -qx "$required_service" <<<"$services"; then
     echo "ERROR: production Compose is missing required service: $required_service" >&2
     exit 1
@@ -33,7 +34,7 @@ APP_SOURCE_ROOT="./source" \
 APP_ENV_FILE="./.env" \
 APP_IMAGE_TAG="$SHA" \
   docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" \
-  up -d --build backend sandbox
+  up -d --build backend worker sandbox
 
 wait_healthy() {
   local container="$1"
@@ -62,10 +63,11 @@ wait_healthy() {
 }
 
 wait_healthy "$API_CONTAINER"
+wait_healthy "$WORKER_CONTAINER"
 wait_healthy "$SANDBOX_CONTAINER"
 
 docker exec "$API_CONTAINER" python3 -m app.workspace_smoke
 
 docker image prune -f >/dev/null 2>&1 || true
 
-echo "Deployed aristotle-api and sandbox at $SHA"
+echo "Deployed aristotle-api, durable worker, and sandbox at $SHA"

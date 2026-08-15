@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 
-
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = API_ROOT.parent
 
@@ -12,12 +11,13 @@ class DeployContractTest(unittest.TestCase):
 
         self.assertIn('exec "$SOURCE_DIR/api/deploy/release" "$SHA"', bootstrap)
 
-    def test_release_requires_and_starts_api_and_sandbox(self):
+    def test_release_requires_and_starts_api_worker_and_sandbox(self):
         release = (API_ROOT / "deploy" / "release").read_text()
 
-        self.assertIn("for required_service in backend sandbox", release)
-        self.assertIn("up -d --build backend sandbox", release)
+        self.assertIn("for required_service in backend worker sandbox", release)
+        self.assertIn("up -d --build backend worker sandbox", release)
         self.assertIn('wait_healthy "$API_CONTAINER"', release)
+        self.assertIn('wait_healthy "$WORKER_CONTAINER"', release)
         self.assertIn('wait_healthy "$SANDBOX_CONTAINER"', release)
         self.assertIn("python3 -m app.workspace_smoke", release)
 
