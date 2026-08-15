@@ -64,6 +64,14 @@ capabilities:
   - WorkspaceTools:
       id: workspace
       description: Persistent per-conversation workspace to create folders, write and run files, and build outputs.
+  - MemoryTools:
+      id: memory
+      description: Durable provenance-linked checkpoints and scalable research-note compaction.
+      max_note_chars: 12000
+      max_active_notes: 50
+  - ReplaySafeTools:
+      id: replay-safety
+      description: Journals tool results and prevents unsafe duplicate side effects during recovery.
 metadata:
   service: aristotle-api
   runtime: pydantic-ai
