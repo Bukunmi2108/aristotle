@@ -1,20 +1,19 @@
 from pathlib import Path
 from typing import cast
 
-from openai import AsyncOpenAI
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
+from openai import AsyncOpenAI
 
 from app.agent.capabilities import CUSTOM_CAPABILITY_TYPES
 from app.agent.deps import AgentDeps
-from app.agent.durable_events import journal_model_events
 from app.agent.model_trace import ModelProviderInfo, TracedModel
 from app.config import ApiSettings
+
 
 AGENT_SPEC_PATH = Path(__file__).with_name("specs") / "aristotle.yaml"
 
@@ -42,25 +41,7 @@ MODELSCOPE_OPENAI_PROFILE = cast(
 
 def build_agent(
     settings: ApiSettings,
-    *,
-    durable: bool = False,
 ) -> Agent[AgentDeps, str]:
-    capabilities = (
-        [
-            DBOSDurability(
-                name="aristotle",
-                event_stream_handler=journal_model_events,
-                model_step_config={
-                    "retries_allowed": True,
-                    "max_attempts": 3,
-                    "interval_seconds": 1,
-                    "backoff_rate": 2,
-                },
-            )
-        ]
-        if durable
-        else None
-    )
     return Agent.from_file(
         AGENT_SPEC_PATH,
         model=build_model(settings),
@@ -68,7 +49,6 @@ def build_agent(
         custom_capability_types=CUSTOM_CAPABILITY_TYPES,
         tool_timeout=settings.search_request_timeout_seconds
         + settings.wake_timeout_seconds,
-        capabilities=capabilities,
     )
 
 

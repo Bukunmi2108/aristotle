@@ -84,10 +84,7 @@ class WorkspaceToolsetTest(unittest.TestCase):
             capability_type = by_name.get(cap_name)
             if capability_type is None:
                 continue  # built-in capability (Thinking, ReinjectSystemPrompt)
-            toolset = capability_type().get_toolset()
-            if toolset is None:
-                continue
-            for name in toolset.tools:
+            for name in capability_type().get_toolset().tools:
                 self.assertNotIn(
                     name,
                     owner,

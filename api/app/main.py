@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,12 +6,10 @@ from shutil import rmtree
 from uuid import uuid4
 
 import httpx
-from dbos import DBOSClient
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 
-from app.chat_runs import DocumentScopeError, create_chat_run
 from app.config import SERVICE_NAME, SETTINGS
 from app.db import PersistenceStore, close_store, create_store
 from app.documents import (
@@ -22,22 +19,20 @@ from app.documents import (
     validate_upload,
 )
 from app.models import (
-    ClientUserMessage,
     FileRecord,
     FileUploadResponse,
     HealthResponse,
     ReadyResponse,
     RenameConversationRequest,
     RootResponse,
-    RunCreatedResponse,
-    RunSteerRequest,
-    ServicesResponse,
     ServiceStatus,
+    ServicesResponse,
 )
 from app.services.model import ModelClient
 from app.services.sandbox_client import SandboxClient, SandboxError
 from app.services.search import SearchClient
 from app.websocket.chat import router as chat_router
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,21 +44,12 @@ async def lifespan(app: FastAPI):
     app.state.model_client = ModelClient(http=http, settings=SETTINGS)
     app.state.search_client = SearchClient(http=http, settings=SETTINGS)
     app.state.sandbox_client = (
-        SandboxClient(http=http, settings=SETTINGS)
-        if SETTINGS.workspace_enabled
-        else None
+        SandboxClient(http=http, settings=SETTINGS) if SETTINGS.workspace_enabled else None
     )
     app.state.store = store
-    app.state.dbos_client = (
-        DBOSClient(system_database_url=SETTINGS.database_url)
-        if SETTINGS.database_url
-        else None
-    )
     try:
         yield
     finally:
-        if app.state.dbos_client is not None:
-            app.state.dbos_client.destroy()
         await close_store(store)
         await http.aclose()
 
@@ -94,7 +80,6 @@ async def root() -> RootResponse:
             "readiness": "/readyz",
             "services": "/services",
             "chat_websocket": "/ws/chat",
-            "chat_runs": "/runs",
             "conversations": "/conversations",
             "files": "/files",
             "docs": "/docs",
@@ -128,25 +113,10 @@ async def services() -> ServicesResponse:
         if SETTINGS.workspace_enabled
         else None
     )
-    store: PersistenceStore | None = getattr(app.state, "store", None)
-    worker_status = None
-    if store is not None and hasattr(store, "worker_ready"):
-        worker_ready = await store.worker_ready(
-            application_version=getattr(
-                SETTINGS, "dbos_application_version", "aristotle-v1"
-            )
-        )
-        worker_status = ServiceStatus(
-            ok=worker_ready,
-            service="worker",
-            url="dbos://aristotle-agent",
-            error=None if worker_ready else "Durable worker heartbeat is stale.",
-        )
     return ServicesResponse(
         model=statuses[0],
         search=statuses[1],
         sandbox=sandbox_status,
-        worker=worker_status,
         poll_interval_seconds=SETTINGS.wake_poll_interval_seconds,
         wake_timeout_seconds=SETTINGS.wake_timeout_seconds,
     )
@@ -194,10 +164,6 @@ async def rename_conversation(
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str) -> dict:
     store = _require_store()
-    dbos_client: DBOSClient | None = getattr(app.state, "dbos_client", None)
-    if dbos_client is not None:
-        for run_id in await store.list_active_run_ids(conversation_id):
-            await dbos_client.cancel_workflow_async(run_id)
     deleted = await store.delete_conversation(conversation_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -365,111 +331,10 @@ async def run(run_id: str) -> dict:
     return {"run": record}
 
 
-@app.post("/runs", response_model=RunCreatedResponse, status_code=202)
-async def start_run(user_message: ClientUserMessage) -> RunCreatedResponse:
-    store = _require_store()
-    if not await store.worker_ready(
-        application_version=SETTINGS.dbos_application_version
-    ):
-        raise HTTPException(status_code=503, detail="Durable worker is not ready.")
-    dbos_client: DBOSClient | None = getattr(app.state, "dbos_client", None)
-    if dbos_client is None:
-        raise HTTPException(
-            status_code=503, detail="Durable execution is not configured."
-        )
-    try:
-        return await create_chat_run(store, dbos_client, user_message)
-    except DocumentScopeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
 @app.get("/runs/{run_id}/events")
 async def run_events(run_id: str, after_event_id: str | None = None) -> dict:
     store = _require_store()
     return {"events": await store.list_events(run_id, after_event_id)}
-
-
-@app.get("/runs/{run_id}/events/stream")
-async def stream_run_events(
-    run_id: str,
-    request: Request,
-    after_event_id: str | None = None,
-) -> StreamingResponse:
-    store = _require_store()
-    if await store.get_run(run_id) is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    cursor = request.headers.get("last-event-id") or after_event_id
-
-    async def event_stream():
-        nonlocal cursor
-        while True:
-            events = await store.list_events(run_id, cursor)
-            for event in events:
-                cursor = event["event_id"]
-                yield (
-                    f"id: {cursor}\n"
-                    f"event: {event['type']}\n"
-                    f"data: {json.dumps(event)}\n\n"
-                )
-            if any(event["type"] in {"session.completed", "error"} for event in events):
-                return
-            record = await store.get_run(run_id)
-            if (
-                record is None or record["status"] in {"complete", "error", "cancelled"}
-            ) and not events:
-                return
-            if await request.is_disconnected():
-                return
-            yield ": keepalive\n\n"
-            await asyncio.sleep(1)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@app.delete("/runs/{run_id}")
-async def cancel_run(run_id: str) -> dict:
-    store = _require_store()
-    record = await store.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    if record["status"] in {"complete", "error", "cancelled"}:
-        return {"ok": True, "status": record["status"]}
-    dbos_client: DBOSClient | None = getattr(app.state, "dbos_client", None)
-    if dbos_client is not None:
-        await dbos_client.cancel_workflow_async(run_id)
-    await store.complete_run(run_id, "cancelled", "Cancelled by user.")
-    await store.update_message(
-        message_id=record["assistant_message_id"],
-        content="",
-        status="stopped",
-    )
-    return {"ok": True, "status": "cancelled"}
-
-
-@app.post("/runs/{run_id}/steer", status_code=202)
-async def steer_run(run_id: str, steering: RunSteerRequest) -> dict:
-    store = _require_store()
-    record = await store.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    if record["status"] not in {"queued", "running"}:
-        raise HTTPException(status_code=409, detail="Run is no longer accepting input.")
-    input_id = f"input_{uuid4().hex}"
-    await store.add_run_input(
-        input_id=input_id,
-        run_id=run_id,
-        content=steering.message.strip(),
-    )
-    return {"input_id": input_id, "status": "pending"}
 
 
 def _require_sandbox() -> SandboxClient:

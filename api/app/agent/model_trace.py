@@ -186,12 +186,8 @@ class TracedModel(Model[Any]):
     ) -> tuple["ModelSettings | None", ModelRequestParameters]:
         return self._model.prepare_request(model_settings, model_request_parameters)
 
-    def prepare_messages(
-        self,
-        messages: list["ModelMessage"],
-        model_request_parameters: ModelRequestParameters | None = None,
-    ) -> list["ModelMessage"]:
-        return self._model.prepare_messages(messages, model_request_parameters)
+    def prepare_messages(self, messages: list["ModelMessage"]) -> list["ModelMessage"]:
+        return self._model.prepare_messages(messages)
 
     def customize_request_parameters(
         self,
