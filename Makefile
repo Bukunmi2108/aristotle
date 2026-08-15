@@ -10,6 +10,7 @@ POSTGRES_PORT ?= 5433
 API_IMAGE ?= aristotle-api
 API_CONTAINER ?= aristotle-api-dev
 WORKER_CONTAINER ?= aristotle-worker-dev
+WORKER_START_TIMEOUT ?= 120
 ARISTOTLE_STORAGE_VOLUME ?= aristotle-storage-dev
 SEARCH_IMAGE ?= aristotle-search
 SEARCH_CONTAINER ?= aristotle-search-dev
@@ -19,14 +20,16 @@ SANDBOX_CONTAINER ?= aristotle-sandbox-dev
 # (SANDBOX_AUTH_TOKEN) so both containers match; fall back to a placeholder.
 SANDBOX_DEV_TOKEN ?= $(or $(shell sed -n 's/^SANDBOX_AUTH_TOKEN=//p' api/.env 2>/dev/null | tail -1),dev-sandbox-token)
 POSTGRES_CONTAINER ?= aristotle-postgres-dev
+POSTGRES_VOLUME ?= aristotle-postgres-data-dev
 POSTGRES_DB ?= aristotle
 POSTGRES_USER ?= aristotle
 DEV_NETWORK ?= aristotle-dev
 
-.PHONY: help dev web api api-build api-stop search search-build search-stop sandbox sandbox-build sandbox-stop postgres postgres-stop dev-network check-dev
+.PHONY: help images dev web api api-build api-stop search search-build search-stop sandbox sandbox-build sandbox-stop postgres postgres-stop dev-network check-dev
 
 help:
 	@echo "Targets:"
+	@echo "  make images        Build or refresh all local Docker images"
 	@echo "  make dev           Start web, api, and search together"
 	@echo "  make web           Start the Vite web app on port $(WEB_PORT)"
 	@echo "  make api           Start Postgres, the API, and its durable worker"
@@ -37,6 +40,8 @@ help:
 	@echo "  make search-stop   Stop the local search Docker container"
 	@echo "  make postgres      Start the local Postgres container on port $(POSTGRES_PORT)"
 	@echo "  make postgres-stop Stop the local Postgres container"
+
+images: api-build search-build sandbox-build
 
 dev: check-dev dev-network
 	@set -euo pipefail; \
@@ -52,6 +57,7 @@ dev: check-dev dev-network
 		echo "Stopping Aristotle dev stack"; \
 		kill "$$WEB_PID" 2>/dev/null || true; \
 		docker stop "$(API_CONTAINER)" >/dev/null 2>&1 || true; \
+		docker stop "$(WORKER_CONTAINER)" >/dev/null 2>&1 || true; \
 		docker stop "$(SEARCH_CONTAINER)" >/dev/null 2>&1 || true; \
 		docker stop "$(SANDBOX_CONTAINER)" >/dev/null 2>&1 || true; \
 		docker stop "$(POSTGRES_CONTAINER)" >/dev/null 2>&1 || true; \
@@ -74,8 +80,12 @@ web:
 	VITE_AGENT_WS_BASE_URL="ws://localhost:$(API_PORT)" \
 	npm run dev -- --host 0.0.0.0 --port "$(WEB_PORT)"
 
-api: dev-network postgres api-build
+api: dev-network postgres
 	@set -euo pipefail; \
+	if ! docker image inspect "$(API_IMAGE)" >/dev/null 2>&1; then \
+		echo "Missing $(API_IMAGE); run 'make api-build' first"; \
+		exit 1; \
+	fi; \
 	env_args=(); \
 	if [ -f .env ]; then env_args+=(--env-file .env); fi; \
 	if [ -f api/.env ]; then env_args+=(--env-file api/.env); fi; \
@@ -86,7 +96,7 @@ api: dev-network postgres api-build
 	fi; \
 	docker rm -f "$(API_CONTAINER)" "$(WORKER_CONTAINER)" >/dev/null 2>&1 || true; \
 	docker volume create "$(ARISTOTLE_STORAGE_VOLUME)" >/dev/null; \
-	docker run -d --rm \
+	docker run -d \
 		--name "$(WORKER_CONTAINER)" \
 		--network "$(DEV_NETWORK)" \
 		"$${env_args[@]}" \
@@ -96,6 +106,28 @@ api: dev-network postgres api-build
 		-v "$(ARISTOTLE_STORAGE_VOLUME):/app/storage" \
 		"$(API_IMAGE)" \
 		uv run --frozen python -m app.worker >/dev/null; \
+	cleanup_worker() { docker stop "$(WORKER_CONTAINER)" >/dev/null 2>&1 || true; }; \
+	trap cleanup_worker EXIT; \
+	echo "Waiting for durable worker"; \
+	worker_ready=false; \
+	for attempt in $$(seq 1 "$(WORKER_START_TIMEOUT)"); do \
+		if [ "$$(docker inspect -f '{{.State.Running}}' "$(WORKER_CONTAINER)" 2>/dev/null || true)" != "true" ]; then \
+			echo "Durable worker exited during startup"; \
+			docker logs "$(WORKER_CONTAINER)" 2>&1 || true; \
+			exit 1; \
+		fi; \
+		if docker exec "$(WORKER_CONTAINER)" test -f /tmp/aristotle-worker-ready; then \
+			worker_ready=true; \
+			break; \
+		fi; \
+		sleep 1; \
+	done; \
+	if [ "$$worker_ready" != true ]; then \
+		echo "Durable worker did not become ready within $(WORKER_START_TIMEOUT) seconds"; \
+		docker logs "$(WORKER_CONTAINER)" 2>&1 || true; \
+		exit 1; \
+	fi; \
+	echo "Durable worker ready"; \
 	docker run --rm \
 		--name "$(API_CONTAINER)" \
 		--network "$(DEV_NETWORK)" \
@@ -112,10 +144,14 @@ api-build:
 	@docker build -t "$(API_IMAGE)" ./api
 
 api-stop:
-	@docker stop "$(API_CONTAINER)" "$(WORKER_CONTAINER)" >/dev/null
+	@docker stop "$(API_CONTAINER)" "$(WORKER_CONTAINER)" >/dev/null 2>&1 || true
 
-search: dev-network search-build
+search: dev-network
 	@set -euo pipefail; \
+	if ! docker image inspect "$(SEARCH_IMAGE)" >/dev/null 2>&1; then \
+		echo "Missing $(SEARCH_IMAGE); run 'make search-build' first"; \
+		exit 1; \
+	fi; \
 	env_args=(); \
 	if [ -f search/.env ]; then env_args+=(--env-file search/.env); fi; \
 	docker rm -f "$(SEARCH_CONTAINER)" >/dev/null 2>&1 || true; \
@@ -132,8 +168,12 @@ search-build:
 search-stop:
 	@docker stop "$(SEARCH_CONTAINER)" >/dev/null
 
-sandbox: dev-network sandbox-build
+sandbox: dev-network
 	@set -euo pipefail; \
+	if ! docker image inspect "$(SANDBOX_IMAGE)" >/dev/null 2>&1; then \
+		echo "Missing $(SANDBOX_IMAGE); run 'make sandbox-build' first"; \
+		exit 1; \
+	fi; \
 	docker rm -f "$(SANDBOX_CONTAINER)" >/dev/null 2>&1 || true; \
 	docker run --rm \
 		--name "$(SANDBOX_CONTAINER)" \
@@ -160,14 +200,15 @@ postgres: dev-network
 		exit 1; \
 	fi; \
 	docker rm -f "$(POSTGRES_CONTAINER)" >/dev/null 2>&1 || true; \
+	docker volume create "$(POSTGRES_VOLUME)" >/dev/null; \
 	docker run -d --rm \
 		--name "$(POSTGRES_CONTAINER)" \
 		--network "$(DEV_NETWORK)" \
 		"$${env_args[@]}" \
 		-e POSTGRES_DB="$(POSTGRES_DB)" \
 		-e POSTGRES_USER="$(POSTGRES_USER)" \
+		-v "$(POSTGRES_VOLUME):/var/lib/postgresql/data" \
 		-p "$(POSTGRES_PORT):5432" \
-		--tmpfs /var/lib/postgresql/data \
 		postgres:16-alpine >/dev/null; \
 	echo "Waiting for Postgres"; \
 	for attempt in $$(seq 1 30); do \

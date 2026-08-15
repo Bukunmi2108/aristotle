@@ -97,8 +97,13 @@ variables.
 
 ```sh
 npm --prefix web install
+make images
 make dev
 ```
+
+`make dev` reuses the existing local images. Run `make images` again after
+changing API, search, or sandbox code or dependencies. Local PostgreSQL data is
+kept in the `aristotle-postgres-data-dev` Docker volume across restarts.
 
 The stack exposes:
 
