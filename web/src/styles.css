@@ -1943,6 +1943,10 @@ input:focus-visible {
   padding: 10px 12px 10px 14px;
 }
 
+.composer__input-row:has(.send-button--stop) {
+  grid-template-columns: 34px minmax(0, 1fr) repeat(2, 42px);
+}
+
 .composer-files {
   display: flex;
   flex-wrap: wrap;
@@ -2194,6 +2198,10 @@ input:focus-visible {
     min-height: 58px;
     grid-template-columns: 32px minmax(0, 1fr) 40px;
     padding: 9px 10px 9px 12px;
+  }
+
+  .composer__input-row:has(.send-button--stop) {
+    grid-template-columns: 32px minmax(0, 1fr) repeat(2, 40px);
   }
 
   .composer__textarea {
