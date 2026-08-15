@@ -1,5 +1,5 @@
-from typing import Any
 from time import perf_counter
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
@@ -35,7 +35,6 @@ from app.models import ClientUserMessage, SearchResponse
 from app.services.sandbox_client import SandboxClient, Workspace
 from app.services.search import SearchClient
 
-
 MAX_HISTORY_CHARS = 24_000
 
 
@@ -46,18 +45,27 @@ class AristotleAgentRuntime:
         settings: ApiSettings,
         document_store: PersistenceStore | None = None,
         sandbox_client: SandboxClient | None = None,
+        agent: Any = None,
+        live_model_events: bool = False,
     ):
         self.search_client = search_client
         self.settings = settings
         self.document_store = document_store
         self.sandbox_client = sandbox_client
+        self.agent = agent
+        self.live_model_events = live_model_events
 
     async def stream_response(
-        self, user_message: ClientUserMessage, events: EventSender
+        self,
+        user_message: ClientUserMessage,
+        events: EventSender,
+        *,
+        message_history: list[ModelMessage] | None = None,
+        execution_pass: int = 0,
     ) -> str:
         trace, trace_token = start_model_trace(self.settings)
         try:
-            agent = build_agent(self.settings)
+            agent = self.agent or build_agent(self.settings)
             options = user_message.options
             if options.file_ids and self.document_store is None:
                 raise RuntimeError("Document persistence is not configured.")
@@ -84,6 +92,10 @@ class AristotleAgentRuntime:
                 document_store=self.document_store,
                 file_ids=options.file_ids,
                 workspace=workspace,
+                conversation_id=user_message.conversation_id,
+                run_id=events.run_id,
+                message_id=events.message_id,
+                execution_pass=execution_pass,
             )
             final_parts: list[str] = []
             model_started = perf_counter()
@@ -100,17 +112,21 @@ class AristotleAgentRuntime:
                     "file_ids": options.file_ids,
                     "primary_model": trace.primary.model,
                     "fallback_model": trace.fallback.model if trace.fallback else None,
-                    "history_messages": len(user_message.history),
-                    "history_chars": sum(
-                        len(message.content) for message in user_message.history
-                    ),
+                    "history_messages": len(message_history or user_message.history),
+                    "history_source": "server"
+                    if message_history is not None
+                    else "client",
                 },
             )
 
             try:
                 async with agent.run_stream_events(
                     prompt,
-                    message_history=_message_history(user_message),
+                    message_history=(
+                        message_history
+                        if message_history is not None
+                        else _message_history(user_message)
+                    ),
                     deps=deps,
                     model_settings={"temperature": self.settings.agent_temperature},
                     conversation_id=user_message.conversation_id,
@@ -148,7 +164,10 @@ class AristotleAgentRuntime:
                             first_text_sent = True
 
                         text_delta = await self._handle_event(
-                            event, events, active_tool_calls
+                            event,
+                            events,
+                            active_tool_calls,
+                            emit_model_deltas=not self.live_model_events,
                         )
                         if text_delta:
                             final_parts.append(text_delta)
@@ -198,6 +217,26 @@ class AristotleAgentRuntime:
                 "verified evidence."
             )
 
+        if conversation_id and hasattr(self.document_store, "list_active_notes"):
+            notes = await self.document_store.list_active_notes(conversation_id)
+            remaining = self.settings.note_context_max_chars
+            note_sections: list[str] = []
+            for note in notes:
+                content = str(note.get("content") or "").strip()
+                if not content or remaining <= 0:
+                    continue
+                content = content[:remaining]
+                note_sections.append(
+                    f"- [{note['kind']}] {note['title']} ({note['id']}):\n{content}"
+                )
+                remaining -= len(content)
+            if note_sections:
+                sections.append(
+                    "Durable research notes from earlier work in this conversation:\n"
+                    + "\n".join(note_sections)
+                    + "\n\nTreat these as working memory with provenance, not as newly "
+                    "verified facts. Refresh time-sensitive claims before using them."
+                )
         if conversation_id:
             presentations = await self.document_store.list_presentations(
                 conversation_id
@@ -256,6 +295,8 @@ class AristotleAgentRuntime:
         event: Any,
         events: EventSender,
         active_tool_calls: dict[str, str] | None = None,
+        *,
+        emit_model_deltas: bool = True,
     ) -> str:
         if isinstance(event, FunctionToolCallEvent):
             if active_tool_calls is not None:
@@ -304,18 +345,28 @@ class AristotleAgentRuntime:
             return ""
 
         if isinstance(event, PartStartEvent):
-            if isinstance(event.part, ThinkingPart) and event.part.content:
+            if (
+                emit_model_deltas
+                and isinstance(event.part, ThinkingPart)
+                and event.part.content
+            ):
                 await events.send("reasoning.delta", text=event.part.content)
             if isinstance(event.part, TextPart) and event.part.content:
-                await events.send("message.delta", text=event.part.content)
+                if emit_model_deltas:
+                    await events.send("message.delta", text=event.part.content)
                 return event.part.content
             return ""
 
         if isinstance(event, PartDeltaEvent):
-            if isinstance(event.delta, ThinkingPartDelta) and event.delta.content_delta:
+            if (
+                emit_model_deltas
+                and isinstance(event.delta, ThinkingPartDelta)
+                and event.delta.content_delta
+            ):
                 await events.send("reasoning.delta", text=event.delta.content_delta)
             if isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
-                await events.send("message.delta", text=event.delta.content_delta)
+                if emit_model_deltas:
+                    await events.send("message.delta", text=event.delta.content_delta)
                 return event.delta.content_delta
 
         return ""
