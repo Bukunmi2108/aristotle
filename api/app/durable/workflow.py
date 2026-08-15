@@ -18,7 +18,6 @@ from app.config import SETTINGS
 from app.events import EventSender
 from app.models import ClientUserMessage
 from app.runtime_services import get_runtime_services
-from app.services.wake import wait_for_service_ready
 
 logger = logging.getLogger(__name__)
 _durable_agent: Any = None
@@ -86,20 +85,6 @@ async def run_turn(run_id: str) -> str:
     try:
         await events.send("session.started")
         services = get_runtime_services()
-        await asyncio.gather(
-            wait_for_service_ready(
-                service="model",
-                is_ready=services.model_client.is_ready,
-                settings=SETTINGS,
-                events=events,
-            ),
-            wait_for_service_ready(
-                service="search",
-                is_ready=services.search_client.is_ready,
-                settings=SETTINGS,
-                events=events,
-            ),
-        )
         runtime = AristotleAgentRuntime(
             search_client=services.search_client,
             settings=SETTINGS,
