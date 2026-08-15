@@ -8,9 +8,11 @@ import asyncpg
 
 from app.config import ApiSettings
 
-
 APP_TABLES = (
     "events",
+    "run_inputs",
+    "worker_heartbeats",
+    "tool_executions",
     "presentations",
     "workspace_runs",
     "workspaces",
@@ -54,8 +56,15 @@ create table if not exists runs (
   started_at timestamptz not null,
   completed_at timestamptz,
   cancelled_at timestamptz,
-  error text
+  error text,
+  request_json jsonb not null default '{}'::jsonb,
+  workflow_id text,
+  last_event_sequence integer not null default 0
 );
+
+alter table runs add column if not exists request_json jsonb not null default '{}'::jsonb;
+alter table runs add column if not exists workflow_id text;
+alter table runs add column if not exists last_event_sequence integer not null default 0;
 
 create table if not exists events (
   id text primary key,
@@ -70,6 +79,54 @@ create table if not exists events (
 
 create index if not exists events_run_sequence_idx on events(run_id, sequence);
 create index if not exists events_conversation_created_idx on events(conversation_id, created_at);
+
+create table if not exists conversation_notes (
+  id text primary key,
+  conversation_id text not null references conversations(id) on delete cascade,
+  source_run_id text references runs(id) on delete set null,
+  kind text not null,
+  title text not null,
+  content text not null,
+  superseded_by text references conversation_notes(id) on delete set null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+);
+
+create index if not exists conversation_notes_active_idx
+  on conversation_notes(conversation_id, created_at)
+  where superseded_by is null;
+
+create table if not exists tool_executions (
+  run_id text not null references runs(id) on delete cascade,
+  tool_call_id text not null,
+  tool_name text not null,
+  arguments_json jsonb not null,
+  status text not null,
+  result_json jsonb,
+  error text,
+  started_at timestamptz not null,
+  completed_at timestamptz,
+  primary key (run_id, tool_call_id)
+);
+
+create table if not exists run_inputs (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  content text not null,
+  status text not null,
+  created_at timestamptz not null,
+  consumed_at timestamptz
+);
+
+create index if not exists run_inputs_pending_idx
+  on run_inputs(run_id, created_at) where status = 'pending';
+
+create table if not exists worker_heartbeats (
+  worker_id text primary key,
+  application_version text not null,
+  started_at timestamptz not null,
+  last_seen_at timestamptz not null
+);
 
 create table if not exists files (
   id text primary key,
@@ -276,14 +333,15 @@ class PersistenceStore:
         conversation_id: str,
         user_message_id: str,
         assistant_message_id: str,
+        request: dict[str, Any] | None = None,
     ) -> None:
         await self.pool.execute(
             """
             insert into runs (
               id, conversation_id, user_message_id, assistant_message_id,
-              status, started_at
+              status, started_at, request_json, workflow_id
             )
-            values ($1, $2, $3, $4, 'running', $5)
+            values ($1, $2, $3, $4, 'queued', $5, $6::jsonb, $1)
             on conflict (id) do nothing
             """,
             run_id,
@@ -291,6 +349,13 @@ class PersistenceStore:
             user_message_id,
             assistant_message_id,
             _now(),
+            json.dumps(request or {}),
+        )
+
+    async def mark_run_running(self, run_id: str) -> None:
+        await self.pool.execute(
+            "update runs set status = 'running' where id = $1 and status = 'queued'",
+            run_id,
         )
 
     async def complete_run(self, run_id: str, status: str, error: str | None = None) -> None:
@@ -309,24 +374,52 @@ class PersistenceStore:
             _now(),
         )
 
-    async def append_event(self, event: dict[str, Any]) -> None:
-        await self.pool.execute(
-            """
-            insert into events (
-              id, run_id, conversation_id, message_id, sequence, type,
-              payload_json, created_at
+    async def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        async with self.pool.acquire() as connection, connection.transaction():
+            existing = await connection.fetchval(
+                "select payload_json from events where id = $1",
+                event["event_id"],
             )
-            values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-            """,
-            event["event_id"],
-            event.get("run_id"),
-            event["conversation_id"],
-            event.get("message_id"),
-            event["sequence"],
-            event["type"],
-            json.dumps(event),
-            _parse_timestamp(event["timestamp"]),
-        )
+            if existing is not None:
+                return _json_payload(existing)
+
+            sequence = event["sequence"]
+            if event.get("run_id") is not None:
+                allocated = await connection.fetchval(
+                    """
+                    update runs
+                    set last_event_sequence = last_event_sequence + 1
+                    where id = $1
+                    returning last_event_sequence
+                    """,
+                    event["run_id"],
+                )
+                if allocated is not None:
+                    sequence = int(allocated)
+            payload = {**event, "sequence": sequence}
+            await connection.execute(
+                """
+                insert into events (
+                  id, run_id, conversation_id, message_id, sequence, type,
+                  payload_json, created_at
+                )
+                values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+                on conflict (id) do nothing
+                """,
+                payload["event_id"],
+                payload.get("run_id"),
+                payload["conversation_id"],
+                payload.get("message_id"),
+                payload["sequence"],
+                payload["type"],
+                json.dumps(payload),
+                _parse_timestamp(payload["timestamp"]),
+            )
+            stored = await connection.fetchval(
+                "select payload_json from events where id = $1",
+                payload["event_id"],
+            )
+        return _json_payload(stored) if stored is not None else payload
 
     async def list_conversations(self) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
@@ -374,11 +467,13 @@ class PersistenceStore:
     async def list_messages(self, conversation_id: str) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(
             """
-            select id, conversation_id, role, content, status, parent_message_id,
-                   created_at, completed_at
-            from messages
-            where conversation_id = $1
-            order by created_at asc
+            select m.id, m.conversation_id, m.role, m.content, m.status,
+                   m.parent_message_id, m.created_at, m.completed_at,
+                   r.id as run_id, r.status as run_status
+            from messages m
+            left join runs r on r.assistant_message_id = m.id
+            where m.conversation_id = $1
+            order by m.created_at asc
             """,
             conversation_id,
         )
@@ -455,13 +550,357 @@ class PersistenceStore:
         row = await self.pool.fetchrow(
             """
             select id, conversation_id, user_message_id, assistant_message_id,
-                   status, started_at, completed_at, cancelled_at, error
+                   status, started_at, completed_at, cancelled_at, error,
+                   workflow_id
             from runs
             where id = $1
             """,
             run_id,
         )
         return _record_to_dict(row) if row is not None else None
+
+    async def list_active_run_ids(self, conversation_id: str) -> list[str]:
+        rows = await self.pool.fetch(
+            """
+            select id from runs
+            where conversation_id = $1 and status in ('queued', 'running')
+            """,
+            conversation_id,
+        )
+        return [str(row["id"]) for row in rows]
+
+    async def get_run_request(self, run_id: str) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            """
+            select id, conversation_id, user_message_id, assistant_message_id,
+                   status, request_json
+            from runs
+            where id = $1
+            """,
+            run_id,
+        )
+        if row is None:
+            return None
+        result = _record_to_dict(row)
+        result["request"] = _json_payload(result.pop("request_json"))
+        return result
+
+    async def list_model_history(
+        self,
+        conversation_id: str,
+        *,
+        before_message_id: str,
+        max_messages: int,
+        max_chars: int,
+    ) -> list[dict[str, str]]:
+        rows = await self.pool.fetch(
+            """
+            select role, content
+            from messages
+            where conversation_id = $1
+              and status = 'complete'
+              and role in ('user', 'assistant')
+              and created_at < (
+                select created_at from messages where id = $2
+              )
+            order by created_at desc
+            limit $3
+            """,
+            conversation_id,
+            before_message_id,
+            max_messages,
+        )
+        selected: list[dict[str, str]] = []
+        remaining = max_chars
+        for row in rows:
+            content = str(row["content"] or "").strip()
+            if not content or remaining <= 0:
+                continue
+            content = content[-remaining:]
+            selected.append({"role": row["role"], "content": content})
+            remaining -= len(content)
+        selected.reverse()
+        return selected
+
+    async def save_note(
+        self,
+        *,
+        note_id: str,
+        conversation_id: str,
+        source_run_id: str | None,
+        kind: str,
+        title: str,
+        content: str,
+    ) -> dict[str, Any]:
+        now = _now()
+        row = await self.pool.fetchrow(
+            """
+            insert into conversation_notes (
+              id, conversation_id, source_run_id, kind, title, content,
+              created_at, updated_at
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $7)
+            on conflict (id) do update set
+              kind = excluded.kind,
+              title = excluded.title,
+              content = excluded.content,
+              updated_at = excluded.updated_at
+            returning id, conversation_id, source_run_id, kind, title, content,
+                      superseded_by, created_at, updated_at
+            """,
+            note_id,
+            conversation_id,
+            source_run_id,
+            kind,
+            title,
+            content,
+            now,
+        )
+        return _record_to_dict(row)
+
+    async def list_active_notes(
+        self, conversation_id: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        rows = await self.pool.fetch(
+            """
+            select id, conversation_id, source_run_id, kind, title, content,
+                   superseded_by, created_at, updated_at
+            from conversation_notes
+            where conversation_id = $1 and superseded_by is null
+            order by created_at desc
+            limit $2
+            """,
+            conversation_id,
+            limit,
+        )
+        return [_record_to_dict(row) for row in rows]
+
+    async def get_note(
+        self, conversation_id: str, note_id: str
+    ) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            """
+            select id, conversation_id, source_run_id, kind, title, content,
+                   superseded_by, created_at, updated_at
+            from conversation_notes
+            where conversation_id = $1 and id = $2
+            """,
+            conversation_id,
+            note_id,
+        )
+        return _record_to_dict(row) if row is not None else None
+
+    async def compact_notes(
+        self,
+        *,
+        note_id: str,
+        conversation_id: str,
+        source_run_id: str | None,
+        title: str,
+        content: str,
+        source_note_ids: list[str],
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as connection, connection.transaction():
+            now = _now()
+            row = await connection.fetchrow(
+                """
+                    insert into conversation_notes (
+                      id, conversation_id, source_run_id, kind, title, content,
+                      created_at, updated_at
+                    )
+                    values ($1, $2, $3, 'compaction', $4, $5, $6, $6)
+                    on conflict (id) do update set
+                      title = excluded.title,
+                      content = excluded.content,
+                      updated_at = excluded.updated_at
+                    returning id, conversation_id, source_run_id, kind, title,
+                              content, superseded_by, created_at, updated_at
+                    """,
+                note_id,
+                conversation_id,
+                source_run_id,
+                title,
+                content,
+                now,
+            )
+            if source_note_ids:
+                await connection.execute(
+                    """
+                        update conversation_notes
+                        set superseded_by = $1, updated_at = $4
+                        where conversation_id = $2
+                          and id = any($3::text[])
+                          and id <> $1
+                        """,
+                    note_id,
+                    conversation_id,
+                    source_note_ids,
+                    now,
+                )
+        return _record_to_dict(row)
+
+    async def begin_tool_execution(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        now = _now()
+        row = await self.pool.fetchrow(
+            """
+            insert into tool_executions (
+              run_id, tool_call_id, tool_name, arguments_json, status, started_at
+            )
+            values ($1, $2, $3, $4::jsonb, 'started', $5)
+            on conflict (run_id, tool_call_id) do nothing
+            returning run_id, tool_call_id, tool_name, arguments_json, status,
+                      result_json, error, started_at, completed_at
+            """,
+            run_id,
+            tool_call_id,
+            tool_name,
+            json.dumps(arguments),
+            now,
+        )
+        inserted = row is not None
+        if row is None:
+            row = await self.pool.fetchrow(
+                """
+                select run_id, tool_call_id, tool_name, arguments_json, status,
+                       result_json, error, started_at, completed_at
+                from tool_executions
+                where run_id = $1 and tool_call_id = $2
+                """,
+                run_id,
+                tool_call_id,
+            )
+        result = _record_to_dict(row)
+        result["arguments"] = _json_payload(result.pop("arguments_json"))
+        if result.get("result_json") is not None:
+            result["result"] = _json_value(result.pop("result_json"))
+        return result, inserted
+
+    async def complete_tool_execution(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        result: Any,
+    ) -> None:
+        await self.pool.execute(
+            """
+            update tool_executions
+            set status = 'complete', result_json = $3::jsonb,
+                error = null, completed_at = $4
+            where run_id = $1 and tool_call_id = $2
+            """,
+            run_id,
+            tool_call_id,
+            json.dumps(result),
+            _now(),
+        )
+
+    async def fail_tool_execution(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        error: str,
+    ) -> None:
+        await self.pool.execute(
+            """
+            update tool_executions
+            set status = 'error', error = $3, completed_at = $4
+            where run_id = $1 and tool_call_id = $2
+            """,
+            run_id,
+            tool_call_id,
+            error[:2000],
+            _now(),
+        )
+
+    async def add_run_input(
+        self, *, input_id: str, run_id: str, content: str
+    ) -> None:
+        await self.pool.execute(
+            """
+            insert into run_inputs (id, run_id, content, status, created_at)
+            values ($1, $2, $3, 'pending', $4)
+            """,
+            input_id,
+            run_id,
+            content,
+            _now(),
+        )
+
+    async def consume_run_inputs(self, run_id: str) -> list[str]:
+        async with self.pool.acquire() as connection, connection.transaction():
+            rows = await connection.fetch(
+                """
+                select id, content
+                from run_inputs
+                where run_id = $1 and status = 'pending'
+                order by created_at asc
+                for update
+                """,
+                run_id,
+            )
+            if rows:
+                await connection.execute(
+                    """
+                    update run_inputs
+                    set status = 'consumed', consumed_at = $2
+                    where id = any($1::text[])
+                    """,
+                    [row["id"] for row in rows],
+                    _now(),
+                )
+        return [str(row["content"]) for row in rows]
+
+    async def heartbeat_worker(
+        self,
+        *,
+        worker_id: str,
+        application_version: str,
+    ) -> None:
+        now = _now()
+        await self.pool.execute(
+            """
+            insert into worker_heartbeats (
+              worker_id, application_version, started_at, last_seen_at
+            )
+            values ($1, $2, $3, $3)
+            on conflict (worker_id) do update set
+              application_version = excluded.application_version,
+              last_seen_at = excluded.last_seen_at
+            """,
+            worker_id,
+            application_version,
+            now,
+        )
+
+    async def remove_worker_heartbeat(self, worker_id: str) -> None:
+        await self.pool.execute(
+            "delete from worker_heartbeats where worker_id = $1", worker_id
+        )
+
+    async def worker_ready(
+        self, *, application_version: str, max_age_seconds: int = 30
+    ) -> bool:
+        ready = await self.pool.fetchval(
+            """
+            select exists (
+              select 1 from worker_heartbeats
+              where application_version = $1
+                and last_seen_at > now() - ($2::text || ' seconds')::interval
+            )
+            """,
+            application_version,
+            str(max_age_seconds),
+        )
+        return bool(ready)
 
     async def create_file(
         self,
@@ -808,11 +1247,16 @@ async def initialize_database(store: PersistenceStore, settings: ApiSettings) ->
             await connection.execute(
                 f"truncate table {', '.join(APP_TABLES)} restart identity cascade"
             )
-        else:
+        elif settings.data_retention_days > 0:
             await connection.execute(
                 """
                 delete from conversations
-                where created_at < now() - ($1::text || ' days')::interval
+                where updated_at < now() - ($1::text || ' days')::interval
+                  and not exists (
+                    select 1 from runs
+                    where runs.conversation_id = conversations.id
+                      and runs.status in ('queued', 'running')
+                  )
                 """,
                 str(settings.data_retention_days),
             )
@@ -846,3 +1290,9 @@ def _json_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return dict(value)
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return json.loads(value)
+    return value

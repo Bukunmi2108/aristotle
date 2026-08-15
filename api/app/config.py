@@ -2,7 +2,6 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-
 SERVICE_NAME = "aristotle-api"
 DEFAULT_FALLBACK_MODEL_BASE_URL = "https://bukunmi2108-aristotle-model.hf.space"
 DEFAULT_FALLBACK_MODEL_NAME = "/models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf"
@@ -31,6 +30,11 @@ class ApiSettings:
     database_url: str | None
     reset_db_on_start: bool
     data_retention_days: int
+    dbos_application_version: str
+    agent_queue_concurrency: int
+    history_max_messages: int
+    history_max_chars: int
+    note_context_max_chars: int
     file_storage_dir: str
     max_upload_bytes: int
     max_parsed_chars: int
@@ -89,7 +93,14 @@ class ApiSettings:
             agent_temperature=float(os.getenv("AGENT_TEMPERATURE", "0.2")),
             database_url=_optional_env("DATABASE_URL"),
             reset_db_on_start=_bool_env("RESET_DB_ON_START", False),
-            data_retention_days=int(os.getenv("DATA_RETENTION_DAYS", "7")),
+            data_retention_days=int(os.getenv("DATA_RETENTION_DAYS", "0")),
+            dbos_application_version=os.getenv(
+                "DBOS_APPLICATION_VERSION", "aristotle-v1"
+            ),
+            agent_queue_concurrency=int(os.getenv("AGENT_QUEUE_CONCURRENCY", "2")),
+            history_max_messages=int(os.getenv("HISTORY_MAX_MESSAGES", "48")),
+            history_max_chars=int(os.getenv("HISTORY_MAX_CHARS", "60000")),
+            note_context_max_chars=int(os.getenv("NOTE_CONTEXT_MAX_CHARS", "12000")),
             file_storage_dir=os.getenv("FILE_STORAGE_DIR", "storage/uploads"),
             max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
             max_parsed_chars=int(os.getenv("MAX_PARSED_CHARS", "250000")),
