@@ -193,6 +193,144 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   }
 }
 
+export type RunCreated = {
+  run_id: string;
+  conversation_id: string;
+  user_message_id: string;
+  assistant_message_id: string;
+  status: string;
+};
+
+export async function startChatRun(
+  payload: ClientUserMessage,
+): Promise<RunCreated> {
+  const response = await fetch(`${agentHttpBaseUrl}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Unable to start Aristotle"));
+  }
+  return response.json() as Promise<RunCreated>;
+}
+
+export async function cancelChatRun(runId: string): Promise<void> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/runs/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Unable to cancel run"));
+  }
+}
+
+export async function steerChatRun(runId: string, message: string): Promise<void> {
+  const response = await fetch(
+    `${agentHttpBaseUrl}/runs/${encodeURIComponent(runId)}/steer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "Unable to add instruction"));
+  }
+}
+
+export async function streamRunEvents(
+  runId: string,
+  onEvent: (event: ServerEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  let afterEventId: string | undefined;
+  let reconnectDelay = 400;
+
+  while (!signal.aborted) {
+    const params = new URLSearchParams();
+    if (afterEventId) params.set("after_event_id", afterEventId);
+    const query = params.toString();
+    try {
+      const response = await fetch(
+        `${agentHttpBaseUrl}/runs/${encodeURIComponent(runId)}/events/stream${
+          query ? `?${query}` : ""
+        }`,
+        { headers: { Accept: "text/event-stream" }, signal },
+      );
+      if (!response.ok || !response.body) {
+        throw new Error(`Run event stream failed with ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let terminal = false;
+      while (!signal.aborted) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const parsed = parseServerEvent(block);
+          if (!parsed) continue;
+          afterEventId = parsed.event.event_id || parsed.id || afterEventId;
+          onEvent(parsed.event);
+          if (
+            parsed.event.type === "session.completed" ||
+            parsed.event.type === "error"
+          ) {
+            terminal = true;
+          }
+        }
+        if (done || terminal) break;
+      }
+      if (terminal || signal.aborted) return;
+      reconnectDelay = 400;
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        return;
+      }
+    }
+
+    await abortableDelay(reconnectDelay, signal);
+    reconnectDelay = Math.min(reconnectDelay * 2, 5_000);
+  }
+}
+
+function parseServerEvent(
+  block: string,
+): { id?: string; event: ServerEvent } | null {
+  if (!block || block.startsWith(":")) return null;
+  let id: string | undefined;
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("id:")) id = line.slice(3).trim();
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  if (!data.length) return null;
+  try {
+    return { id, event: JSON.parse(data.join("\n")) as ServerEvent };
+  } catch {
+    return null;
+  }
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = window.setTimeout(resolve, milliseconds);
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
 export function connectChat(
   payload: ClientUserMessage,
   onEvent: (event: ServerEvent) => void,

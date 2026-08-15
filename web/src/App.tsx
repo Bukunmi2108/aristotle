@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import {
-  connectChat,
+  cancelChatRun,
   deleteFile as deleteUploadedFile,
   deleteConversation as deleteServerConversation,
   fetchConversation,
@@ -17,6 +17,9 @@ import {
   fetchPresentations,
   fetchServices,
   renameConversation as renameServerConversation,
+  startChatRun,
+  steerChatRun,
+  streamRunEvents,
   uploadFile,
 } from "./api";
 import {
@@ -51,7 +54,6 @@ import {
 } from "./urlSync";
 import { MAX_PROMPT_LENGTH } from "./composerUtils";
 import type {
-  ChatHistoryMessage,
   ChatMessage,
   Conversation,
   FileRecord,
@@ -69,8 +71,6 @@ import type {
   ToolResultPreview,
 } from "./types";
 
-const MAX_HISTORY_MESSAGES = 24;
-const MAX_HISTORY_CHARS = 24_000;
 const SCROLL_BOTTOM_THRESHOLD = 72;
 const DEFAULT_WAKE_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_WAKE_TIMEOUT_MS = 180_000;
@@ -106,7 +106,11 @@ function App() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const uploadRequestRef = useRef(0);
-  const socketRef = useRef<WebSocket | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
+  const cancelOnStartRef = useRef(false);
+  const pendingSteeringRef = useRef<string[]>([]);
+  const seenEventIdsRef = useRef(new Set<string>());
   const activeAssistantIdRef = useRef<string | null>(null);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
@@ -251,6 +255,25 @@ function App() {
   }, [activeId]);
 
   useEffect(() => {
+    if (streamAbortRef.current || runState !== "idle" || !activeConversation) {
+      return;
+    }
+    const running = [...activeConversation.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" &&
+          message.status === "streaming" &&
+          Boolean(message.runId),
+      );
+    if (running?.runId) {
+      resumeAssistantRun(activeConversation.id, running.id, running.runId);
+    }
+    // The function is recreated per render; adding it would reconnect this stream.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversation, runState]);
+
+  useEffect(() => {
     if (!activeMessageCount) {
       autoScrollRef.current = true;
       return;
@@ -303,7 +326,8 @@ function App() {
         if (
           nextServices.model.ok &&
           nextServices.search.ok &&
-          (!nextServices.sandbox || nextServices.sandbox.ok)
+          (!nextServices.sandbox || nextServices.sandbox.ok) &&
+          (!nextServices.worker || nextServices.worker.ok)
         ) {
           setServiceWakePhase("ready");
           return;
@@ -552,15 +576,18 @@ function App() {
       !prompt ||
       prompt.length > MAX_PROMPT_LENGTH ||
       !activeConversation ||
-      isUploadingFile ||
-      runState === "streaming" ||
-      runState === "connecting"
+      isUploadingFile
     ) {
       return;
     }
 
+    if (isRunning) {
+      setComposer("");
+      queueSteering(prompt);
+      return;
+    }
+
     stopStream("stopped");
-    const history = buildChatHistory(activeConversation.messages);
     const submittedAttachments = attachedFiles.map(messageAttachmentFromFile);
     const fileIds = parsedMessageAttachmentIds(submittedAttachments);
 
@@ -610,7 +637,6 @@ function App() {
       activeConversation.id,
       assistantMessageId,
       prompt,
-      history,
       fileIds,
     );
   }
@@ -637,9 +663,6 @@ function App() {
 
     const now = new Date().toISOString();
     const assistantMessageId = crypto.randomUUID();
-    const history = buildChatHistory(
-      activeConversation.messages.slice(0, userIndex),
-    );
     const assistantMessage: ChatMessage = {
       id: assistantMessageId,
       role: "assistant",
@@ -663,7 +686,6 @@ function App() {
       activeConversation.id,
       assistantMessageId,
       prompt,
-      history,
       fileIds,
     );
   }
@@ -672,38 +694,105 @@ function App() {
     conversationId: string,
     assistantId: string,
     prompt: string,
-    history: ChatHistoryMessage[],
     fileIds: string[],
   ) {
     activeAssistantIdRef.current = assistantId;
     setRunState("connecting");
 
-    socketRef.current = connectChat(
-      {
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    cancelOnStartRef.current = false;
+    seenEventIdsRef.current.clear();
+    void startChatRun({
         type: "user.message",
         message: prompt,
         conversation_id: conversationId,
         active_artifact_id: activeArtifactId || undefined,
-        history,
         options: {
           max_search_results: 5,
           file_ids: fileIds,
         },
-      },
-      (serverEvent) =>
-        handleServerEvent(
-          conversationId,
-          assistantId,
-          serverEvent,
-        ),
-      () => {
-        socketRef.current = null;
-      },
-      (message) => {
+      })
+      .then((run) => {
+        activeRunIdRef.current = run.run_id;
+        updateConversation(conversationId, (conversation) => ({
+          ...conversation,
+          messages: conversation.messages.map((message) =>
+            message.id === assistantId
+              ? { ...message, runId: run.run_id }
+              : message,
+          ),
+        }));
+        if (controller.signal.aborted) {
+          if (cancelOnStartRef.current) void cancelChatRun(run.run_id);
+          cancelOnStartRef.current = false;
+          return;
+        }
+        for (const instruction of pendingSteeringRef.current.splice(0)) {
+          void steerChatRun(run.run_id, instruction);
+        }
+        return streamRunEvents(
+          run.run_id,
+          (serverEvent) =>
+            handleServerEvent(conversationId, assistantId, serverEvent),
+          controller.signal,
+        );
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : "Run failed.";
         appendWarning(conversationId, assistantId, message);
+        completeAssistant(conversationId, assistantId, "", "error");
         setRunState("error");
-      },
-    );
+      });
+  }
+
+  function resumeAssistantRun(
+    conversationId: string,
+    assistantId: string,
+    runId: string,
+  ) {
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    activeRunIdRef.current = runId;
+    activeAssistantIdRef.current = assistantId;
+    seenEventIdsRef.current.clear();
+    setRunState("connecting");
+    void streamRunEvents(
+      runId,
+      (serverEvent) =>
+        handleServerEvent(conversationId, assistantId, serverEvent),
+      controller.signal,
+    ).catch(() => {
+      if (!controller.signal.aborted) setRunState("error");
+    });
+  }
+
+  function queueSteering(instruction: string) {
+    const runId = activeRunIdRef.current;
+    if (runId) {
+      void steerChatRun(runId, instruction).catch((error: unknown) => {
+        if (activeConversation && activeAssistantIdRef.current) {
+          appendWarning(
+            activeConversation.id,
+            activeAssistantIdRef.current,
+            error instanceof Error ? error.message : "Instruction was not queued.",
+          );
+        }
+      });
+    } else {
+      pendingSteeringRef.current.push(instruction);
+    }
+    if (activeConversation && activeAssistantIdRef.current) {
+      appendTool(activeConversation.id, activeAssistantIdRef.current, {
+        id: `steer-${crypto.randomUUID()}`,
+        type: "tool",
+        label: "Instruction queued",
+        status: "complete",
+        timestamp: new Date().toISOString(),
+        input: { message: instruction },
+      });
+    }
   }
 
   function handleServerEvent(
@@ -711,6 +800,10 @@ function App() {
     assistantId: string,
     event: ServerEvent,
   ) {
+    if (event.event_id) {
+      if (seenEventIdsRef.current.has(event.event_id)) return;
+      seenEventIdsRef.current.add(event.event_id);
+    }
     if (event.type === "service.checking" || event.type === "service.waking") {
       setRunState("warming");
       appendTool(conversationId, assistantId, {
@@ -894,8 +987,9 @@ function App() {
 
     if (event.type === "session.completed") {
       setRunState("complete");
-      socketRef.current?.close();
-      socketRef.current = null;
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+      activeRunIdRef.current = null;
       activeAssistantIdRef.current = null;
       return;
     }
@@ -908,6 +1002,9 @@ function App() {
       );
       completeAssistant(conversationId, assistantId, "", "error");
       setRunState("error");
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+      activeRunIdRef.current = null;
     }
   }
 
@@ -1181,12 +1278,22 @@ function App() {
     }));
   }
 
-  function stopStream(status: "stopped" | "complete" = "stopped") {
-    const hadSocket = socketRef.current !== null;
-    socketRef.current?.close();
-    socketRef.current = null;
+  function stopStream(
+    status: "stopped" | "complete" = "stopped",
+    cancel = false,
+  ) {
+    const hadStream = streamAbortRef.current !== null;
+    const runId = activeRunIdRef.current;
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    activeRunIdRef.current = null;
+    if (cancel && runId) {
+      void cancelChatRun(runId);
+    } else if (cancel) {
+      cancelOnStartRef.current = true;
+    }
 
-    if (hadSocket && activeConversation && activeAssistantIdRef.current) {
+    if (hadStream && cancel && activeConversation && activeAssistantIdRef.current) {
       const assistantId = activeAssistantIdRef.current;
       const completedAt = new Date().toISOString();
       updateConversation(activeConversation.id, (conversation) => ({
@@ -1380,7 +1487,7 @@ function App() {
               isRunning={isRunning}
               setComposer={setComposer}
               onSubmit={submitMessage}
-              onStop={() => stopStream("stopped")}
+              onStop={() => stopStream("stopped", true)}
               attachedFiles={attachedFiles}
               fileError={fileError}
               isUploadingFile={isUploadingFile}
@@ -1599,6 +1706,7 @@ function messageFromServer(message: StoredMessage): ChatMessage {
       sizeBytes: artifact.size_bytes,
     })),
     metrics,
+    runId: message.run_id || undefined,
     parts:
       message.role === "assistant" && content
         ? [
@@ -1623,47 +1731,6 @@ function normalizeMessageStatus(status?: string): ChatMessage["status"] {
     return status;
   }
   return "complete";
-}
-
-function buildChatHistory(messages: ChatMessage[]): ChatHistoryMessage[] {
-  const history: ChatHistoryMessage[] = [];
-  let remainingChars = MAX_HISTORY_CHARS;
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.status && message.status !== "complete") {
-      continue;
-    }
-
-    const content = historyContent(message);
-    if (!content) {
-      continue;
-    }
-
-    const trimmed =
-      content.length > remainingChars
-        ? content.slice(content.length - remainingChars).trim()
-        : content;
-    if (!trimmed) {
-      break;
-    }
-
-    history.push({ role: message.role, content: trimmed });
-    remainingChars -= trimmed.length;
-    if (history.length >= MAX_HISTORY_MESSAGES || remainingChars <= 0) {
-      break;
-    }
-  }
-
-  return history.reverse();
-}
-
-function historyContent(message: ChatMessage): string {
-  const content =
-    message.role === "assistant"
-      ? message.content || textFromParts(message.parts ?? [])
-      : message.content;
-  return (content || "").trim();
 }
 
 function textFromParts(parts: MessagePart[]): string {
