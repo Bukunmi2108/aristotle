@@ -5,15 +5,15 @@ sandboxed data work. It combines a streaming chat interface with web search,
 uploaded-file tools, Python execution, persistent conversation history, and
 primary/fallback model routing.
 
-Aristotle is under active development. Its current defaults favor experimentation
-over production durability and access control.
+Aristotle is under active development. Durable run recovery is implemented;
+authentication and multi-user access control remain future work.
 
 ## What Aristotle can do
 
 - Research current information through SearXNG and return source-backed answers.
 - Read, search, quote, summarize, and compare uploaded documents.
 - Inspect CSV files, run Python calculations, and generate downloadable charts.
-- Stream reasoning, tool activity, sources, and answer text over WebSockets.
+- Stream and replay reasoning, tool activity, sources, and answer text by run ID.
 - Persist conversations, messages, runs, events, files, and generated artifacts.
 - Use a hosted primary model and fall back to a llama.cpp-compatible model service.
 
@@ -23,19 +23,19 @@ Supported uploads include text, Markdown, JSON, CSV, HTML, PDF, and DOCX files.
 
 ```mermaid
 flowchart LR
-    Web[React web client] -->|HTTP + WebSocket| API[FastAPI agent API]
-    API --> Primary[Primary model provider]
-    API --> Fallback[llama.cpp fallback model]
-    API --> Search[Search service]
+    Web[React web client] -->|HTTP + resumable events| API[FastAPI control plane]
+    API --> DB[(PostgreSQL + DBOS queue)]
+    Worker[Headless durable worker] --> DB
+    Worker --> Primary[Primary model provider]
+    Worker --> Fallback[llama.cpp fallback model]
+    Worker --> Search[Search service]
     Search --> SearXNG[SearXNG]
-    API --> Postgres[(PostgreSQL)]
-    API --> Sandbox[Isolated Python sandbox]
+    Worker --> Sandbox[Isolated Python sandbox]
     Sandbox --> Artifacts[Generated artifacts]
 ```
 
-The browser communicates only with the API. The API owns agent orchestration,
-service readiness checks, model fallback, persistence, document processing,
-sandbox execution, and translation of agent events into the client protocol.
+The browser communicates only with the API. The API owns control and reads; the
+worker owns execution, recovery, model fallback, and tool orchestration.
 
 The default development command starts the web, API, search, and PostgreSQL
 services. The repository's local model container is optional because the API is
@@ -46,7 +46,7 @@ configured to use hosted model providers by default.
 | Directory | Responsibility | Documentation |
 | --- | --- | --- |
 | `web/` | React 19, TypeScript, Vite, and Tailwind chat client | [Web guide](web/README.md) |
-| `api/` | FastAPI, Pydantic AI, WebSocket streaming, persistence, documents, and workspace orchestration | [API guide](api/README.md) |
+| `api/` | FastAPI, Pydantic AI, durable execution, persistence, documents, and workspace orchestration | [API guide](api/README.md), [durable runs](api/docs/durable-runs.md) |
 | `sandbox/` | Private code-execution + workspace service (folders, run/build files, presented artifacts) | [Sandbox guide](sandbox/README.md) |
 | `search/` | FastAPI wrapper around an internal SearXNG process | [Search guide](search/README.md) |
 | `model/` | Dockerized llama.cpp fallback model endpoint | [Model guide](model/README.md) |
@@ -148,8 +148,8 @@ uv sync
 uv run uvicorn app.main:app --reload --port 8400
 ```
 
-The API exposes the chat WebSocket at `/ws/chat` and HTTP endpoints for service
-status, conversations, messages, files, artifacts, runs, and recorded run events.
+The API creates chat work at `POST /runs`; the browser resumes it from the run
+event stream. `/ws/chat` remains a compatibility delivery route.
 See the generated `/docs` page and the [API guide](api/README.md) for details.
 
 ### Optional local model
@@ -203,12 +203,10 @@ The services are designed to deploy independently:
 - `web/` builds to a static Vite bundle and includes a Vercel SPA rewrite.
 - `api/`, `search/`, and `model/` each contain a Dockerfile suitable for any
   container host.
-- `api/` and `search/` deploy to the Workspace VPS behind the shared Caddy
-  gateway with Sablier scale-to-zero (see `api/deploy/` and `search/deploy/`),
-  sharing one Sablier group so the API's wake also starts search; `model/` runs
-  as a Hugging Face Docker Space.
-- The API can use an external PostgreSQL database. When `DATABASE_URL` is absent
-  from the API image, its startup script creates an internal ephemeral database.
+- The API and search edge routes use Sablier; the durable worker and sandbox are
+  always on. Worker search calls use the public wake-aware search route.
+- Production requires external PostgreSQL. Ephemeral internal PostgreSQL is
+  available only with the explicit `ALLOW_EPHEMERAL_DB=true` development flag.
 - The frontend should always call the API rather than connecting directly to
   the search or model services.
 
@@ -218,7 +216,7 @@ The services are designed to deploy independently:
 - The search service is currently unauthenticated.
 - API CORS defaults to `*`; restrict it before exposing a production deployment.
 - The sandbox is designed for Linux and relies on process and system-level limits.
-- The default data-retention period is seven days.
+- Data retention is disabled by default (`DATA_RETENTION_DAYS=0`).
 - Authentication and multi-user authorization are not currently part of the API.
 
 Use production secrets, durable storage, explicit network policy, and restricted

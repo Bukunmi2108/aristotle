@@ -9,6 +9,8 @@ SANDBOX_PORT ?= 8500
 POSTGRES_PORT ?= 5433
 API_IMAGE ?= aristotle-api
 API_CONTAINER ?= aristotle-api-dev
+WORKER_CONTAINER ?= aristotle-worker-dev
+ARISTOTLE_STORAGE_VOLUME ?= aristotle-storage-dev
 SEARCH_IMAGE ?= aristotle-search
 SEARCH_CONTAINER ?= aristotle-search-dev
 SANDBOX_IMAGE ?= aristotle-sandbox
@@ -27,7 +29,7 @@ help:
 	@echo "Targets:"
 	@echo "  make dev           Start web, api, and search together"
 	@echo "  make web           Start the Vite web app on port $(WEB_PORT)"
-	@echo "  make api           Start Postgres and the API Docker container on port $(API_PORT)"
+	@echo "  make api           Start Postgres, the API, and its durable worker"
 	@echo "  make api-build     Build the local API Docker image"
 	@echo "  make api-stop      Stop the local API Docker container"
 	@echo "  make search        Start the search Docker container on port $(SEARCH_PORT)"
@@ -82,7 +84,18 @@ api: dev-network postgres api-build
 		echo "DATABASE_URL must be set in the shell, .env, or api/.env"; \
 		exit 1; \
 	fi; \
-	docker rm -f "$(API_CONTAINER)" >/dev/null 2>&1 || true; \
+	docker rm -f "$(API_CONTAINER)" "$(WORKER_CONTAINER)" >/dev/null 2>&1 || true; \
+	docker volume create "$(ARISTOTLE_STORAGE_VOLUME)" >/dev/null; \
+	docker run -d --rm \
+		--name "$(WORKER_CONTAINER)" \
+		--network "$(DEV_NETWORK)" \
+		"$${env_args[@]}" \
+		-e ARISTOTLE_SEARCH_BASE_URL="http://$(SEARCH_CONTAINER):7860" \
+		-e SANDBOX_SERVICE_BASE_URL="http://$(SANDBOX_CONTAINER):7860" \
+		-e SANDBOX_SERVICE_TOKEN="$(SANDBOX_DEV_TOKEN)" \
+		-v "$(ARISTOTLE_STORAGE_VOLUME):/app/storage" \
+		"$(API_IMAGE)" \
+		uv run --frozen python -m app.worker >/dev/null; \
 	docker run --rm \
 		--name "$(API_CONTAINER)" \
 		--network "$(DEV_NETWORK)" \
@@ -91,6 +104,7 @@ api: dev-network postgres api-build
 		-e ARISTOTLE_SEARCH_BASE_URL="http://$(SEARCH_CONTAINER):7860" \
 		-e SANDBOX_SERVICE_BASE_URL="http://$(SANDBOX_CONTAINER):7860" \
 		-e SANDBOX_SERVICE_TOKEN="$(SANDBOX_DEV_TOKEN)" \
+		-v "$(ARISTOTLE_STORAGE_VOLUME):/app/storage" \
 		-p "$(API_PORT):7860" \
 		"$(API_IMAGE)"
 
@@ -98,7 +112,7 @@ api-build:
 	@docker build -t "$(API_IMAGE)" ./api
 
 api-stop:
-	@docker stop "$(API_CONTAINER)" >/dev/null
+	@docker stop "$(API_CONTAINER)" "$(WORKER_CONTAINER)" >/dev/null
 
 search: dev-network search-build
 	@set -euo pipefail; \
