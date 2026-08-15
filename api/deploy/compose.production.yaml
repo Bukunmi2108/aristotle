@@ -60,9 +60,9 @@ services:
     env_file:
       - ${APP_ENV_FILE:-./.env}
     environment:
-      # Direct container traffic would not reset Sablier's idle timer during
-      # long runs, so the worker uses the wake-aware public proxy.
-      ARISTOTLE_SEARCH_BASE_URL: ${ARISTOTLE_DURABLE_SEARCH_BASE_URL:-https://aristotle-search.duckdns.org}
+      # The API request wakes the shared Sablier group before queueing the run;
+      # keep worker-to-search traffic on the shared gateway network.
+      ARISTOTLE_SEARCH_BASE_URL: http://workspace-aristotle-search:7860
     networks:
       - gateway
       - data
